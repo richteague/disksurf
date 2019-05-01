@@ -11,7 +11,8 @@ from scipy.ndimage import rotate, shift
 from scipy.interpolate import interp1d
 
 
-def measure_height(cube, inc, PA, x0=0.0, y0=0.0, chans=None, threshold=0.95):
+def measure_height(cube, inc, PA, x0=0.0, y0=0.0, chans=None, threshold=0.95,
+                   smooth=[0.5, 0.5], **kwargs):
     """
     Infer the height of the emission surface from the provided cube.
 
@@ -25,6 +26,8 @@ def measure_height(cube, inc, PA, x0=0.0, y0=0.0, chans=None, threshold=0.95):
             in the fitting.
         threshold (optional[float]): Fraction of the peak intensity at that
             radius to clip in calculating the data.
+        smooth (optional[list]): Kernel to smooth the profile with prior to
+            measuring the peak pixel positions.
     """
 
     # Extract the channels to use.
@@ -73,7 +76,7 @@ def measure_height(cube, inc, PA, x0=0.0, y0=0.0, chans=None, threshold=0.95):
             try:
                 profile = np.convolve(data[c_idx, :, x_idx],
                                       smooth, mode='same')
-                y_idx = detect_peaks(profile, mpd=mpd)
+                y_idx = detect_peaks(profile, mpd=mpd, **kwargs)
                 y_idx = y_idx[data[c_idx, y_idx, x_idx].argsort()]
                 y_f, y_n = cube.yaxis[y_idx[-2:]]
                 y_c = 0.5 * (y_f + y_n)
