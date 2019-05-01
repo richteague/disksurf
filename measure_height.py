@@ -1,6 +1,9 @@
 """
 Functions to infer the average height of the emission based on the method
-presented in Pinte et al. (2018a).
+presented in Pinte et al. (2018a). All of the rotating and shifting is done
+with scipy.ndimage which may introduce some artifacts. It is probably more
+thorough to shift and rotate your images in visibility space with CASA before
+imaging.
 """
 
 from detect_peaks import detect_peaks
@@ -20,9 +23,8 @@ def measure_height(cube, inc, PA, x0=0.0, y0=0.0, chans=None, threshold=0.95):
         y0 (optional[float]): Source center offset in y direction in [arcsec].
         chans (optional[list]): The lower and upper channel numbers to include
             in the fitting.
-        threshold (optional[float]): Fraction of the peak intensity
-            at that radius to clip.
-        smooth (optional[list]):
+        threshold (optional[float]): Fraction of the peak intensity at that
+            radius to clip in calculating the data.
     """
 
     # Extract the channels to use.
