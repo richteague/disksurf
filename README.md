@@ -10,4 +10,4 @@ Functions to measure the height of optically thick emission using the method pre
 
 #### Notes
 
-Part of the code uses `detect_peaks.py` from [Marcos Duarte](https://github.com/demotu/BMC). For this to run you need the [imgcube](https://github.com/richteague/imgcube) package.
+Part of the code uses `detect_peaks.py` from [Marcos Duarte](https://github.com/demotu/BMC). For this to run you need the [GoFish](https://github.com/richteague/gofish) package.
