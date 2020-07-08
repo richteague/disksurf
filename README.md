@@ -18,9 +18,12 @@ $ cd diskprojection
 $ pip install .
 ```
 
+This has a couple of dependencies, namely [astropy](https://github.com/astropy/astropy) and [GoFish](https://github.com/richteague/gofish), which should be installed automatically if you don't have them. 
+
 ## How do I use it?
 
 ```python
+# import the package
 from diskprojection import disk_observation
 
 # load up the observations
