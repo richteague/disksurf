@@ -23,18 +23,45 @@ class disk_observation(imagecube):
         super().__init__(path=path, FOV=FOV)
 
     def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, chans=None,
-                             r_max=None, nsigma=1.0, smooth=1.0,
-                             think_positively=True, detect_peaks_kwargs=None,
-                             verbose=True):
+                             r_min=None, r_max=None, smooth=1.0,
+                             return_sorted=True, smooth_threshold_kwargs=None,
+                             detect_peaks_kwargs=None):
         """
-        Implementation of the method described in Pinte et al. (2018).
+        Implementation of the method described in Pinte et al. (2018). There
+        are several pre-processing options to help with the peak detection.
 
         Args:
+            inc (float): Disk inclination in [degrees].
+            PA (float): Disk position angle in [degrees].
+            x0 (optional[float]): Disk offset along the x-axis in [arcsec].
+            y0 (optional[float]): Disk offset along the y-axis in [arcsec].
+            chans (optional[tuple]): First and last channels to include in the
+                inference.
+            r_min (optional[float]): Minimuim radius in [arcsec] of values to
+                return. Default is all possible values.
+            r_max (optional[float]): Maximum radius in [arcsec] of values to
+                return. Default is all possible values.
+            smooth (optional[float]): Prior to detecting peaks, smooth the
+                pixel column with a Gaussian kernel with a FWHM equal to
+                ``smooth * cube.bmaj``. If ``smooth == 0`` then no smoothing is
+                applied.
+            return_sorted (optional[bool]): If ``True``, return the points
+                ordered in increasing radius.
+            smooth_threshold_kwargs (optional[dict]): Keyword arguments passed
+                to ``smooth_threshold``.
+            detect_peaks_kwargs (optional[dict]): Keyword arguments passed to
+                ``detect_peaks``.
 
+        Returns:
+            r, z, Fnu, v (arrays): Arrays of radius, height, flux density and
+                velocity.
         """
 
         # Determine the spatial and spectral region to fit.
-        r_max = r_max if r_max is not None else self.xaxis.max()
+        r_min = 0.0 if r_min is None else r_min
+        r_max = self.xaxis.max() if r_max is None else r_max
+        if r_min >= r_max:
+            raise ValueError("`r_min` must be less than `r_max`.")
         chans = [0, self.data.shape[0]-1] if chans is None else chans
         if len(chans) != 2:
             raise ValueError("`chans` must be a length 2 list of channels.")
@@ -42,27 +69,28 @@ class disk_observation(imagecube):
             raise ValueError("`chans` extends beyond the number of channels.")
         chans[0], chans[1] = int(min(chans)), int(max(chans))
         data = self.data.copy()[chans[0]:chans[1]+1]
-        if verbose:
+        if self.verbose:
             velo = [self.velax[chans[0]] / 1e3, self.velax[chans[1]] / 1e3]
             velo = [min(velo), max(velo)]
             print("Using {:.2f} km/s to {:.2f} km/s,".format(velo[0], velo[1])
-                  + ' and 0.00" to {:.2f}".'.format(r_max))
+                  + ' and {:.2f}" to {:.2f}".'.format(r_min, r_max))
 
         # Shift and rotate the data.
         if x0 != 0.0 or y0 != 0.0:
-            if verbose:
+            if self.verbose:
                 print("Centering data cube...")
             x0_pix = x0 / self.dpix
             y0_pix = y0 / self.dpix
             data = disk_observation.shift_center(data, x0_pix, y0_pix)
         if PA != 90.0 and PA != 270.0:
-            if verbose:
+            if self.verbose:
                 print("Rotating data cube...")
             data = disk_observation.rotate_image(data, PA)
 
         # Get the masked data.
-        data = self.radial_threshold(data, inc, nsigma=nsigma, smooth=smooth,
-                                     think_positively=think_positively)
+        if smooth_threshold_kwargs is None:
+            smooth_threshold_kwargs = {}
+        data = self.radial_threshold(data, inc, **smooth_threshold_kwargs)
 
         # Default dicionary for kwargs.
         if detect_peaks_kwargs is None:
@@ -75,7 +103,7 @@ class disk_observation(imagecube):
             kernel = None
 
         # Find all the peaks.
-        if verbose:
+        if self.verbose:
             print("Detecting peaks...")
 
         peaks = []
@@ -93,14 +121,21 @@ class disk_observation(imagecube):
                     y_f, y_n = self.yaxis[y_idx[-2:]]
                     y_c = 0.5 * (y_f + y_n)
                     r = np.hypot(x_c, (y_f - y_c) / np.cos(np.radians(inc)))
+                    if not r_min <= r <= r_max:
+                        raise ValueError("Out of bounds.")
                     z = y_c / np.sin(np.radians(inc))
                     Fnu = data[c_idx, y_idx[-1], x_idx]
                 except (ValueError, IndexError):
                     r, z, Fnu = np.nan, np.nan, np.nan
                 peaks += [[r, z, Fnu, self.velax[c_idx]]]
         peaks = np.squeeze(peaks).T
-        mask = peaks[2] > 0.0 if think_positively else np.isfinite(peaks[2])
-        return peaks[:, mask]
+        peaks = peaks[:, np.isfinite(peaks[2])]
+
+        # Sort the values in increasing radius.
+        if return_sorted:
+            idxs = np.argsort(peaks[0])
+            peaks = [p[idxs] for p in peaks]
+        return peaks
 
     def radial_threshold(self, rotated_data, inc, nsigma=1.0, smooth=1.0,
                          think_positively=True, mask_value=0.0):
@@ -128,6 +163,8 @@ class disk_observation(imagecube):
                 all masked values are ``mask_value``.
 
         """
+        if nsigma == 0.0:
+            return rotated_data
         Fnu = np.nanmax(rotated_data, axis=0).flatten()
         rbins, rpnts = self.radial_sampling()
         rvals = self.disk_coords(x0=0.0, y0=0.0, inc=inc, PA=0.0)[0]
@@ -241,6 +278,47 @@ class disk_observation(imagecube):
         if return_mask:
             return mask
         return [p[mask] for p in to_return]
+
+    def estimate_channel_range(self, average='median', nsigma=5.0, nchan=None):
+        """
+        Estimate the channel range to use for the emission surface inference.
+        This is done by calculating a spectrum based on the average pixel value
+        for each channel (using either the median or mean, specified by the
+        ``average`` argument), then selecting channels ``nsigma`` times above
+        the stanard deviation of the spectrum calculated from the first and
+        last ``nchan`` channels.
+
+        .. note::
+            Sometime a particularly noisy channel will result in a larger than
+            expected channel range. This should not affect the performance of
+            ``get_emission_surface`` if appropriate clipping and masking is
+            applied afterwards.
+
+        Args:
+            average (optional[str]): Type of average to use, either
+                ``'median'`` or ``'mean'``.
+            nsigma (optional[float]): The RMS factor used to clip channels.
+            nchan (optional[int]): The number of first and last channels to use
+                to estimate the standard deviation of the spectrum.
+
+        Returns:
+            chans (list): A tuple of first and last channels to use for the
+                ``chans`` argument in ``get_emission_surface``.
+
+        """
+        if average.lower() == 'median':
+            avg = np.nanmedian
+        elif average.lower() == 'mean':
+            avg = np.nanmean
+        else:
+            raise ValueError("Unknown `average` value: {}.".format(average))
+        spectrum = np.array([avg(c) for c in self.data])
+        nchan = int(self.velax.size / 3) if nchan is None else int(nchan)
+        if nchan > self.velax.size / 2 and self.verbose:
+            print("WARNING: `nchan` larger than half the spectral axis.")
+        rms = np.nanstd([spectrum[:nchan], spectrum[-nchan:]])
+        mask = abs(spectrum) > nsigma * rms
+        return [self.channels[mask][0], self.channels[mask][-1] + 1]
 
     def bin_in_radius(self, r, x, rbins=None, rvals=None, average='mean',
                       uncertainty='std'):
