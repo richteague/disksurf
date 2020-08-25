@@ -109,6 +109,8 @@ class disk_observation(imagecube):
         peaks = []
         for c_idx in range(data.shape[0]):
             for x_idx in range(data.shape[2]):
+                if not r_min <= abs(self.xaxis[x_idx]) <= r_max:
+                    continue
                 x_c = self.xaxis[x_idx]
                 mpd = detect_peaks_kwargs.get('mpd', 0.05 * abs(x_c))
                 try:
@@ -136,6 +138,38 @@ class disk_observation(imagecube):
             idxs = np.argsort(peaks[0])
             peaks = [p[idxs] for p in peaks]
         return peaks
+
+    def quick_peak_profile(self, inc, PA, data=None):
+        """
+        Returns a quick and dirty radial profile of the peak flux density. This
+        function does not consider any flared emission surfaces, offset  and
+        only takes the maximum value along the spectral axis.
+
+        Args:
+            inc (float): Disk inclination in [degrees].
+            PA (float): Disk position angle in [degrees].
+            data (optional): Data to make a profile of. If no data is provided,
+                take the maximum of ``self.data`` along the spectral axis.
+
+        Returns:
+            r, Fnu, dFnu (array, array, array): Arrays of the peak flux
+                density, ``Fnu`` at radial positions ``r``. ``dFnu`` is given
+                by the standard error on the mean.
+        """
+        data = np.nanmax(self.data.copy(), axis=0) if data is None else data
+        if data.ndim != 2:
+            raise ValueError("`data` must be a 2D array.")
+        data = data.flatten()
+        rbins, rpnts = self.radial_sampling()
+        rvals = self.disk_coords(x0=0.0, y0=0.0, inc=inc, PA=PA)[0]
+        ridxs = np.digitize(rvals.flatten(), rbins)
+        Fnu, dFnu = [], []
+        for r in range(1, rbins.size):
+            _tmp = data[ridxs == r]
+            _tmp = _tmp[np.isfinite(_tmp)]
+            Fnu += [np.mean(_tmp)]
+            dFnu += [np.std(_tmp) / len(_tmp)**0.5]
+        return rpnts, np.array(Fnu), np.array(dFnu)
 
     def radial_threshold(self, rotated_data, inc, nsigma=1.0, smooth=1.0,
                          think_positively=True, mask_value=0.0):
@@ -165,25 +199,13 @@ class disk_observation(imagecube):
         """
         if nsigma == 0.0:
             return rotated_data
-        Fnu = np.nanmax(rotated_data, axis=0).flatten()
-        rbins, rpnts = self.radial_sampling()
         rvals = self.disk_coords(x0=0.0, y0=0.0, inc=inc, PA=0.0)[0]
-        ridxs = np.digitize(rvals.flatten(), rbins)
-
-        avgTb, stdTb = [], []
-        for r in range(1, rbins.size):
-            _tmp = Fnu[ridxs == r]
-            _tmp = _tmp[_tmp > 0.0] if think_positively else _tmp
-            avgTb += [np.nanmean(_tmp)]
-            stdTb += [np.nanstd(_tmp)]
-        avgTb = np.array(avgTb)
-        stdTb = np.array(stdTb)
-
+        out = self.quick_peak_profile(inc, 0.0, np.max(rotated_data, axis=0))
+        rpnts, avgTb, stdTb = out
         if smooth > 0.0:
             kernel = Gaussian1DKernel((smooth * self.bmaj) / self.dpix / 2.235)
             avgTb = convolve(avgTb, kernel, boundary='wrap')
             stdTb = convolve(stdTb, kernel, boundary='wrap')
-
         Fnu_clip = interp1d(rpnts, avgTb - nsigma * stdTb,
                             bounds_error=False, fill_value=0.0)(rvals)
         return np.where(rotated_data >= Fnu_clip, rotated_data, mask_value)
@@ -279,7 +301,44 @@ class disk_observation(imagecube):
             return mask
         return [p[mask] for p in to_return]
 
-    def estimate_channel_range(self, average='median', nsigma=5.0, nchan=None):
+    def estimate_radial_range(self, inc=0.0, PA=0.0, nsigma=5.0, nchan=None):
+        """
+        Estimate the radial range to consider in the emission surface. This is
+        done by making a radial profile of the peak flux density, then only
+        considering the radial range where the peak value is greater than
+        ``nsigma * RMS`` where ``RMS`` is calculated based on the first and
+        last ``nchan`` channels.
+
+        Args:
+            inc (optional[float]): Disk inclination in [degrees].
+            PA (optional[float]): Disk position angle in [degrees].
+            nsigma (optional[float]): The RMS factor used to clip the profile.
+            nchan (optional[int]): The number of first and last channels to use
+                to estimate the standard deviation of the spectrum.
+
+        Returns:
+            r_min, r_max (float, float): The inner and outer radius where the
+                peak flux density is above the provided limit.
+        """
+        r, Fnu, _ = self.quick_peak_profile(inc=inc, PA=PA)
+        nchan = int(self.velax.size / 3) if nchan is None else int(nchan)
+        if nchan > self.velax.size / 2 and self.verbose:
+            print("WARNING: `nchan` larger than half the spectral axis.")
+        Fnu /= self.estimate_RMS(N=nchan)
+        Fnu = np.where(Fnu >= nsigma, 1, 0)
+        r_min = 0.0
+        for i, F in enumerate(Fnu):
+            if F > 0:
+                r_min = r[i]
+                break
+        r_max = self.xaxis.max()
+        for i, F in enumerate(Fnu[::-1]):
+            if F > 0:
+                r_max = r[r.size - i]
+                break
+        return 0.0 if r_min == r[0] else r_min, r_max
+
+    def estimate_channel_range(self, average='mean', nsigma=5.0, nchan=None):
         """
         Estimate the channel range to use for the emission surface inference.
         This is done by calculating a spectrum based on the average pixel value
@@ -320,12 +379,50 @@ class disk_observation(imagecube):
         mask = abs(spectrum) > nsigma * rms
         return [self.channels[mask][0], self.channels[mask][-1] + 1]
 
+    def estimate_rolling_stats_window(self, r, nbeams=1.0, check_ordered=True):
+        """
+        Estimate the window size for ``rolling_stats`` to match the requested
+        number of beam FWHMs.
+
+        Args:
+            r (list): A list of monotonically increasing radial points.
+            nbeams (optional[float]): Desired window size as a fraction of the
+                beam major FWHM.
+            check_ordered (optional[bool]): Check that ``r`` is monotonically
+                increasing. If not, raise a ``ValueError``.
+
+        Returns:
+            window_size (int): The size of the window that best reproduces the
+                requested scale.
+        """
+        dr = np.diff(r)
+        if check_ordered and any(dr < 0):
+            raise ValueError("Values in `r` are not monotonically increasing.")
+        dr = np.where(dr == 0.0, 1e-10, dr)
+        return np.median(nbeams * self.bmaj / dr).astype('int')
+
     def bin_in_radius(self, r, x, rbins=None, rvals=None, average='mean',
                       uncertainty='std'):
         """
         Radially bin the ``x`` data. The error can either be the standard
-        deviation in the bin (``error='std'``), or the 16th to 84th percentiles
-        (``error='percentiles'``).
+        deviation in the bin (``uncertainty='std'``), the 16th to 84th
+        percentiles (``uncertainty='percentiles'``) or the standard erron on
+        the mean (``uncertainty='standard'``).
+
+        Args:
+            r (list): A list of the radial points in [arcsec].
+            x (list): A list of the poinst to bin.
+            rbins (optional[list]): A list of the bin edges to use.
+            rpnts (optional[list]): A list of the bin centers to use. The edge
+                bins are calculated assuming equal size bins.
+            average (optional[str]): Type of average to use for the binned
+                values: either ``'mean'`` or ``'median'``.
+            uncertainty (optional[str]): Type of uncertainty to use for the
+                binned values: ``'std'``, ``'percentiles'`` or ``'standard'``.
+
+        Returns:
+            rvals, z_avg, z_err (array, array, array: Arrays of the bin
+                centres, bin average and bin uncertainties.
         """
         from scipy.stats import binned_statistic
         rbins, rvals = self.radial_sampling(rbins=rbins, rvals=rvals)
@@ -341,6 +438,7 @@ class disk_observation(imagecube):
 
         if uncertainty.lower() == 'std':
             z_err = binned_statistic(r, x, bins=rbins, statistic=np.nanstd)[0]
+
         elif uncertainty.lower() == 'percentiles':
 
             def err_a(x):
@@ -356,6 +454,12 @@ class disk_observation(imagecube):
             z_err_b = binned_statistic(r, x, bins=rbins, statistic=err_b)[0]
             z_err_c = binned_statistic(r, x, bins=rbins, statistic=err_c)[0]
             z_err = np.array([z_err_b - z_err_a, z_err_c - z_err_b])
+
+        elif uncertainty.lower() == 'standard':
+            z_err = binned_statistic(r, x, bins=rbins, statistic=np.nanstd)[0]
+            npnts = binned_statistic(r, x, bins=rbins, statistic='count')[0]
+            z_err /= np.sqrt(npnts)
+
         else:
             warning = "Unknown `uncertainty` value, {}."
             raise ValueError(warning.format(uncertainty))
