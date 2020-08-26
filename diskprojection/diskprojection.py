@@ -598,6 +598,49 @@ class disk_observation(imagecube):
 
         return rvals, z_avg, z_err
 
+    def fit_emission_surface(self, r, z, dz=None, tapered_powerlaw=True,
+                             curve_fit_kwargs=None):
+        """
+        Fit the inferred emission surface with a tapered power law of the form
+
+        .. math::
+            z(r) = z_0 \, \left( \frac{r}{1^{\prime\prime}} \right)^{\psi}
+            \times \exp \left( -\left[ \frac{r}{r_{\rm taper}}
+            \right]^{\psi_{\rm taper}} \right)
+
+        where a single power law profile is recovered when
+        :math:`r_{\rm taper} \rightarrow \infty`, and can be forced using the
+        ``tapered_powerlaw=False`` argument.
+
+        The fitting is performed with ``scipy.optimize.curve_fit`` where the
+        returned uncertainties are the square root of the diagnal components of
+        the covariance maxtrix returned by ``curve_fit``.
+
+        Args:
+            r (array): An array of radius values in [arcsec].
+            z (array): An array of corresponding z values in [arcsec].
+            dz (optional[array]): An array of uncertainties for the z values in
+                [arcsec]. If these are absolute uncertainties, make sure to
+                include the ``absolute_sigma=True`` argument in the kwargs.
+            tapered_powerlaw (optional[bool]): If ``True``, fit the tapered
+                power law profile rather than a single power law function.
+            curve_fit_kwargs (optional[dict]): Keyword arguments to pass to
+                ``scipy.optimize.curve_fit``.
+
+        Returns:
+            popt, copy (array, array): Best-fit values and associated
+                uncertainties for the fits.
+        """
+        from scipy.optimize import curve_fit
+        kw = {} if curve_fit_kwargs is None else curve_fit_kwargs
+        kw['maxfev'] = kw.pop('maxfev', 100000)
+        kw['sigma'] = kw.pop('sigma', dz)
+        if not tapered_powerlaw:
+            kw['p0'] = [0.3, 1.0]
+        popt, copt = curve_fit(disk_observation.tapered_powerlaw, r, z, **kw)
+        copt = np.diag(copt)**0.5
+        return popt, copt
+
     # -- Static Methods -- #
 
     @staticmethod
@@ -691,3 +734,14 @@ class disk_observation(imagecube):
             mask = abs(xtmp - mu) < nsigma * sigma
             xtmp, xnum = xtmp[mask], xnum[mask]
         return np.squeeze([xx in xnum for xx in np.arange(x.size)])
+
+    @staticmethod
+    def powerlaw(x, x0, q):
+        """Standard poewr law profile."""
+        return x0 * x**q
+
+    @staticmethod
+    def tapered_powerlaw(x, x0, q, x_taper=np.inf, q_taper=1.0):
+        """Tapered power law profile."""
+        f = disk_observation.powerlaw(x, x0, q)
+        return f * np.exp(-(x / x_taper)**q_taper)
