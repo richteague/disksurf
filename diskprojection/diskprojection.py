@@ -1,5 +1,7 @@
 """
-Combined function to get everything.
+A wrapper class to allow a user to extract an emission surface from a datacube
+of molecular line emission. This uses the method presented in Pinte et al.
+(2018).
 """
 from astropy.convolution import convolve, Gaussian1DKernel
 from scipy.interpolate import interp1d
@@ -23,7 +25,7 @@ class disk_observation(imagecube):
         super().__init__(path=path, FOV=FOV)
 
     def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, chans=None,
-                             r_min=None, r_max=None, smooth=1.0,
+                             r_min=None, r_max=None, smooth=0.5,
                              return_sorted=True, smooth_threshold_kwargs=None,
                              detect_peaks_kwargs=None):
         """
@@ -56,6 +58,12 @@ class disk_observation(imagecube):
             r, z, Fnu, v (arrays): Arrays of radius, height, flux density and
                 velocity.
         """
+
+        # Remove bad inclination:
+        if inc == 0.0:
+            raise ValueError("Cannot infer height with face on disk.")
+        if self.verbose and abs(inc) < 10.0:
+            print("WARNING: Inferences with such face on disk are poor.")
 
         # Determine the spatial and spectral region to fit.
         r_min = 0.0 if r_min is None else r_min
@@ -284,12 +292,13 @@ class disk_observation(imagecube):
                 the beam major axis. This is only rough.
             min_sigma (optional[float]): Minimum standard deviation to use in
                 the iterative clipping as a fraction of the beam major axis.
+            return_mask (optional[bool]): Return the mask rather than the
+                clipped arrays.
+
+        Returns:
+            r, z[, Fnu, v] (array, array[, array, array])
         """
-        to_return = [r, z]
-        if Fnu is not None:
-            to_return += [Fnu]
-        if v is not None:
-            to_return += [v]
+        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
         idxs = np.argsort(to_return[0])
         to_return = [p[idxs] for p in to_return]
         window = int((window * self.bmaj) / np.diff(to_return[0]).mean())
@@ -297,9 +306,132 @@ class disk_observation(imagecube):
         mask = disk_observation.sigma_clip(to_return[1], nsigma=nsigma,
                                            niter=niter, window=window,
                                            min_sigma=min_sigma)
-        if return_mask:
-            return mask
-        return [p[mask] for p in to_return]
+        return disk_observation._return_arguments(to_return, mask, return_mask)
+
+    def clip_emission_height(self, r, z, Fnu=None, v=None, z_min=None,
+                             z_max=None, return_mask=False):
+        """
+        Clip the data based on absolute values on the emission height.
+
+        Args:
+            r (array): An array of radius values in [arcsec].
+            z (array): An array of corresponding z values in [arcsec].
+            Fnu (optional[array]): Array of flux densities in [Jy/beam].
+            v (optional[array]): Array of velocities in [m/s].
+            z_min (optional[float]): Minimum value of z to include in [arcsec].
+            z_max (optional[float]): Maximum value of z to include in [arcsec].
+            return_mask (optional[bool]): Return the mask rather than the
+                clipped arrays.
+
+        Returns:
+            r, z[, Fnu, v] (array, array[, array, array])
+        """
+        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
+        z_min = z.min() if z_min is None else z_min
+        z_max = z.max() if z_max is None else z_max
+        if not z_min < z_max:
+            raise ValueError("`z_min` must be smaller than `z_max`.")
+        mask = np.logical_and(z >= z_min, z <= z_max)
+        return disk_observation._return_arguments(to_return, mask, return_mask)
+
+    def clip_aspect_ratio(self, r, z, Fnu=None, v=None, zr_min=None,
+                          zr_max=None, return_mask=False):
+        """
+        Clip the data based on the aspect ratio of the emission, :math:`z/r`.
+
+        Args:
+            r (array): An array of radius values in [arcsec].
+            z (array): An array of corresponding z values in [arcsec].
+            Fnu (optional[array]): Array of flux densities in [Jy/beam].
+            v (optional[array]): Array of velocities in [m/s].
+            zr_min (optional[float]): Minimum aspect ratio to include.
+            zr_max (optional[float]): Maximum aspect ratio to include.
+            return_mask (optional[bool]): Return the mask rather than the
+                clipped arrays.
+
+        Returns:
+            r, z[, Fnu, v] (array, array[, array, array])
+        """
+        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
+        zr_min = -1e2 if zr_min is None else zr_min
+        zr_max = 1e2 if zr_max is None else zr_max
+        if not zr_min < zr_max:
+            raise ValueError("`zr_min` must be smaller than `zr_max`.")
+        mask = np.logical_and(z/r >= zr_min, z/r <= zr_max)
+        return disk_observation._return_arguments(to_return, mask, return_mask)
+
+    def clip_flux_density(self, r, z, Fnu, v=None, Fnu_min=None, Fnu_max=None,
+                          return_mask=False):
+        """
+        Clip the data based on the flux density, :math:`F_{\nu}`.
+
+        Args:
+            r (array): An array of radius values in [arcsec].
+            z (array): An array of corresponding z values in [arcsec].
+            Fnu (optional[array]): Array of flux densities in [Jy/beam].
+            v (optional[array]): Array of velocities in [m/s].
+            Fnu_min (optional[float]): Minimum flux density to include in
+                [Jy/beam].
+            Fnu_max (optional[float]): Maximum flux density to include in
+                [Jy/beam].
+            return_mask (optional[bool]): Return the mask rather than the
+                clipped arrays.
+
+        Returns:
+            r, z[, Fnu, v] (array, array[, array, array])
+        """
+        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
+        Fnu_min = Fnu.min() if Fnu_min is None else Fnu_min
+        Fnu_max = Fnu.max() if Fnu_max is None else Fnu_max
+        if not Fnu_min < Fnu_max:
+            raise ValueError("`Fnu_min` must be smaller than `Fnu_max`.")
+        mask = np.logical_and(Fnu >= Fnu_min, Fnu <= Fnu_max)
+        return disk_observation._return_arguments(to_return, mask, return_mask)
+
+    def clip_rolling_scatter_threshold(self, r, z, Fnu=None, v=None,
+                                       inc=90.0, nbeams=0.25, window=None,
+                                       return_mask=False):
+        """
+        Clip the data based on the value of the rolling scatter. As the
+        vertical direction is related to the on-sky distance as,
+
+        .. math::
+            z = \frac{y}{sin(i)}
+
+        then for some uncertainty in :math:`y`, ``npix``, we can calculate the
+        associated scatter in :math:`z`.
+
+        .. warning::
+            For low inclinations this will translate to very large scatters.
+            The default ``inc`` value will result in the minimum scatter in
+            ``z``.
+
+        Args:
+            r (array): An array of radius values in [arcsec].
+            z (array): An array of corresponding z values in [arcsec].
+            Fnu (optional[array]): Array of flux densities in [Jy/beam].
+            v (optional[array]): Array of velocities in [m/s].
+            inc (optional[float]): Inclination of disk in [degrees].
+            nbeams (optional[float]): Threshold of the scatter as a fraction of
+                the beam major axis.
+            window (optional[int]): Window size for the rolling standard
+                deviation. Defaults to quarter of the beam FWHM.
+            return_mask (optional[bool]): Return the mask rather than the
+                clipped arrays.
+
+        Returns:
+            r, z[, Fnu, v] (array, array[, array, array])
+        """
+        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
+        if window is None:
+            window = self.estimate_rolling_stats_window(to_return[0], 0.25)
+        _, z_std = disk_observation.rolling_stats(to_return[1], window=window)
+        scatter_threshold = nbeams * self.bmaj / np.sin(np.radians(inc))
+        for idx, scatter in enumerate(z_std):
+            if scatter > scatter_threshold:
+                break
+        mask = to_return[0] < to_return[0][idx]
+        return disk_observation._return_arguments(to_return, mask, return_mask)
 
     def estimate_radial_range(self, inc=0.0, PA=0.0, nsigma=5.0, nchan=None):
         """
@@ -466,6 +598,25 @@ class disk_observation(imagecube):
 
         return rvals, z_avg, z_err
 
+    # -- Static Methods -- #
+
+    @staticmethod
+    def _pack_arguments(r, z, Fnu=None, v=None):
+        """Return the packed (r, z[, Fnu, v]) tuple."""
+        to_return = [r, z]
+        if Fnu is not None:
+            to_return += [Fnu]
+        if v is not None:
+            to_return += [v]
+        return to_return
+
+    @staticmethod
+    def _return_arguments(to_return, mask, return_mask):
+        """Unpacks the arugments to return."""
+        if return_mask:
+            return mask
+        return [p[mask] for p in to_return]
+
     @staticmethod
     def rotate_image(data, PA):
         """
@@ -513,13 +664,19 @@ class disk_observation(imagecube):
         return shifted
 
     @staticmethod
-    def rolling_stats(x, window=51):
+    def rolling_stats(x, window=51, average='mean'):
         """Rolling average and standard deviation."""
         w = window if window % 2 else window + 1
         edge = int((w - 1) / 2)
         xx = np.insert(x, 0, x[0] * np.ones(edge))
         xx = np.insert(xx, -1, x[-1] * np.ones(edge))
-        avg = np.squeeze([np.mean(xx[i+edge:i+w+edge]) for i in range(x.size)])
+        if average.lower() == 'mean':
+            avg = np.mean
+        elif average.lower() == 'median':
+            avg = np.median
+        else:
+            raise ValueError("Unknown `average` value: '{}''.".format(average))
+        avg = np.squeeze([avg(xx[i+edge:i+w+edge]) for i in range(x.size)])
         std = np.squeeze([np.std(xx[i+edge:i+w+edge]) for i in range(x.size)])
         return avg, std
 
