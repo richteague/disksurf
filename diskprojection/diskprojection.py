@@ -599,7 +599,7 @@ class disk_observation(imagecube):
         return rvals, z_avg, z_err
 
     def fit_emission_surface(self, r, z, dz=None, tapered_powerlaw=True,
-                             curve_fit_kwargs=None):
+                             include_cavity=False, curve_fit_kwargs=None):
         """
         Fit the inferred emission surface with a tapered power law of the form
 
@@ -611,6 +611,11 @@ class disk_observation(imagecube):
         where a single power law profile is recovered when
         :math:`r_{\rm taper} \rightarrow \infty`, and can be forced using the
         ``tapered_powerlaw=False`` argument.
+
+        We additionally allow for an inner cavity, :math:`r_{\rm cavity}`,
+        inside which all emission heights are set to zero, and the radial range
+        is shifted such that :math:`r^{\prime} = r - r_{\rm cavity}`. This can
+        be toggled with the ``include_cavity`` argument.
 
         The fitting is performed with ``scipy.optimize.curve_fit`` where the
         returned uncertainties are the square root of the diagnal components of
@@ -624,6 +629,8 @@ class disk_observation(imagecube):
                 include the ``absolute_sigma=True`` argument in the kwargs.
             tapered_powerlaw (optional[bool]): If ``True``, fit the tapered
                 power law profile rather than a single power law function.
+            include_cavity (optional[bool]): If ``True``, include a cavity in
+                the functional form, inside of which all heights are set to 0.
             curve_fit_kwargs (optional[dict]): Keyword arguments to pass to
                 ``scipy.optimize.curve_fit``.
 
@@ -635,8 +642,11 @@ class disk_observation(imagecube):
         kw = {} if curve_fit_kwargs is None else curve_fit_kwargs
         kw['maxfev'] = kw.pop('maxfev', 100000)
         kw['sigma'] = kw.pop('sigma', dz)
+        kw['p0'] = kw.pop('p0', [0.3, 1.0, 1.0, 1.0, 0.05])
+        if not include_cavity and len(kw['p0']) % 2:
+            kw['p0'] = kw['p0'][:-1]
         if not tapered_powerlaw:
-            kw['p0'] = [0.3, 1.0]
+            kw['p0'] = kw['p0'][:2] + kw['p0'][4:]
         popt, copt = curve_fit(disk_observation.tapered_powerlaw, r, z, **kw)
         copt = np.diag(copt)**0.5
         return popt, copt
@@ -736,12 +746,13 @@ class disk_observation(imagecube):
         return np.squeeze([xx in xnum for xx in np.arange(x.size)])
 
     @staticmethod
-    def powerlaw(x, x0, q):
+    def powerlaw(r, z0, q, r_cavity=0.0):
         """Standard poewr law profile."""
-        return x0 * x**q
+        f = z0 * (r - r_cavity)**q
+        return np.where(r >= r_cavity, f, 0.0)
 
     @staticmethod
-    def tapered_powerlaw(x, x0, q, x_taper=np.inf, q_taper=1.0):
+    def tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0):
         """Tapered power law profile."""
-        f = disk_observation.powerlaw(x, x0, q)
-        return f * np.exp(-(x / x_taper)**q_taper)
+        f = disk_observation.powerlaw(r, z0, q, r_cavity)
+        return f * np.exp(-(r / r_taper)**q_taper)
