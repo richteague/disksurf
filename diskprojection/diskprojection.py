@@ -433,6 +433,80 @@ class disk_observation(imagecube):
         mask = to_return[0] < to_return[0][idx]
         return disk_observation._return_arguments(to_return, mask, return_mask)
 
+    def estimate_radial_range_counts(self, r, min_counts=8, window=8,
+                                     bin_in_radius_kwargs=None):
+        """
+        Given some binning parameters, the number of points in each bin are
+        counted. Starting from the bin with the most points in, the closest two
+        bins where the counts fall below some threshold are given at the inner
+        and outer bounds to clip the data.
+
+        Args:
+            r (array): Either array of the unbinned radial samples.
+            min_counts (optional[int]): Minimum number of counts for each bin.
+            window (optional[int]): Window size to use to calculate the rolling
+                average of the bin counts.
+            bin_in_radius_kwargs (optional[dict]): Kwargs to pass to
+                ``bin_in_radius`` if ``bin_data=True``.
+
+        Returns:
+            r_min, r_max (float, float): Inner and outer radius of
+        """
+
+        kw = {} if bin_in_radius_kwargs is None else bin_in_radius_kwargs
+        kw['statistic'] = 'count'
+        r_bins, N_bins, _ = self.bin_in_radius(r, r, **kw)
+        if window > 1:
+            N_bins, _ = disk_observation.rolling_stats(N_bins, window)
+        idx = np.argmax(N_bins)
+
+        if N_bins[idx] < min_counts:
+            raise ValueError("No bin with {} counts.".format(min_counts))
+
+        min_val = N_bins.max()
+        for i in range(idx):
+            min_val = min(N_bins[idx - i], min_val)
+            if min_val < min_counts:
+                break
+        i += 1 if i == idx - 1 else 0
+        r_min = r_bins[idx - i]
+
+        min_val = N_bins.max()
+        for i in range(r_bins.size - idx):
+            min_val = min(N_bins[idx + i], min_val)
+            if min_val < min_counts:
+                break
+        r_max = r_bins[idx + i]
+
+        return r_min, r_max
+
+    def clip_bin_counts(self, r, z, Fnu=None, v=None, min_counts=8, window=8,
+                        bin_in_radius_kwargs=None, return_mask=False):
+        """
+        Given some binning parameters, the number of points in each bin are
+        counted. Starting from the bin with the most points in, the closest two
+        bins where the counts fall below some threshold are given at the inner
+        and outer bounds to clip the data.
+
+        Args:
+            r (array): Either array of the unbinned radial samples.
+            min_counts (optional[int]): Minimum number of counts for each bin.
+            window (optional[int]): Window size to use to calculate the rolling
+                average of the bin counts.
+            bin_in_radius_kwargs (optional[dict]): Kwargs to pass to
+                ``bin_in_radius`` if ``bin_data=True``.
+            return_mask (optional[bool]): Return the mask rather than the
+                clipped arrays.
+
+        Returns:
+            r, z[, Fnu, v] (array, array[, array, array])
+        """
+        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
+        r_min, r_max = self.estimate_radial_range_counts(r, min_counts, window,
+                                                         bin_in_radius_kwargs)
+        mask = np.logical_and(r >= r_min, r <= r_max)
+        return disk_observation._return_arguments(to_return, mask, return_mask)
+
     def estimate_radial_range(self, inc=0.0, PA=0.0, nsigma=5.0, nchan=None):
         """
         Estimate the radial range to consider in the emission surface. This is
@@ -466,7 +540,7 @@ class disk_observation(imagecube):
         r_max = self.xaxis.max()
         for i, F in enumerate(Fnu[::-1]):
             if F > 0:
-                r_max = r[r.size - i]
+                r_max = r[r.size - 1 - i]
                 break
         return 0.0 if r_min == r[0] else r_min, r_max
 
@@ -533,7 +607,7 @@ class disk_observation(imagecube):
         dr = np.where(dr == 0.0, 1e-10, dr)
         return np.median(nbeams * self.bmaj / dr).astype('int')
 
-    def bin_in_radius(self, r, x, rbins=None, rvals=None, average='mean',
+    def bin_in_radius(self, r, x, rbins=None, rvals=None, statistic='mean',
                       uncertainty='std'):
         """
         Radially bin the ``x`` data. The error can either be the standard
@@ -547,8 +621,10 @@ class disk_observation(imagecube):
             rbins (optional[list]): A list of the bin edges to use.
             rpnts (optional[list]): A list of the bin centers to use. The edge
                 bins are calculated assuming equal size bins.
-            average (optional[str]): Type of average to use for the binned
-                values: either ``'mean'`` or ``'median'``.
+            statistic (optional[str]): Statistic to use for
+                ``scipy.stats.binned_statistic``. If ``'mean'`` or ``'median'``
+                are provided, will default to the Numpy functions which can
+                handle NaNs.
             uncertainty (optional[str]): Type of uncertainty to use for the
                 binned values: ``'std'``, ``'percentiles'`` or ``'standard'``.
 
@@ -559,14 +635,11 @@ class disk_observation(imagecube):
         from scipy.stats import binned_statistic
         rbins, rvals = self.radial_sampling(rbins=rbins, rvals=rvals)
 
-        if average.lower() == 'mean':
-            avg_func = np.nanmean
-        elif average.lower() == 'median':
-            avg_func = np.nanmedian
-        else:
-            warning = "Unknown `average` value, {}."
-            raise ValueError(warning.format(average))
-        z_avg = binned_statistic(r, x, bins=rbins, statistic=avg_func)[0]
+        if statistic.lower() == 'mean':
+            statistic = np.nanmean
+        elif statistic.lower() == 'median':
+            statistic = np.nanmedian
+        z_avg = binned_statistic(r, x, bins=rbins, statistic=statistic)[0]
 
         if uncertainty.lower() == 'std':
             z_err = binned_statistic(r, x, bins=rbins, statistic=np.nanstd)[0]

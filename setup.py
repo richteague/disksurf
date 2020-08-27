@@ -8,7 +8,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="diskprojection",
-    version="0.2",
+    version="0.3",
     author="Richard Teague",
     author_email="richard.d.teague@cfa.harvard.edu",
     description=("Infer and reproject a disk's 3D structure."),
