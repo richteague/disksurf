@@ -8,7 +8,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="diskprojection",
-    version="0.3",
+    version="0.4",
     author="Richard Teague",
     author_email="richard.d.teague@cfa.harvard.edu",
     description=("Infer and reproject a disk's 3D structure."),
@@ -23,6 +23,7 @@ setup(
         "matplotlib",
         "gofish",
         "astropy",
+        "emcee",
         ],
     classifiers=[
         "Programming Language :: Python :: 3.5",

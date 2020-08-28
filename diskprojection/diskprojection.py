@@ -8,6 +8,7 @@ from scipy.interpolate import interp1d
 from .detect_peaks import detect_peaks
 from gofish import imagecube
 import numpy as np
+import time
 
 
 class disk_observation(imagecube):
@@ -589,6 +590,7 @@ class disk_observation(imagecube):
         if sum(mask) < minimum_mask_size:
             if self.verbose:
                 print("WARNING: Mask smaller than `minimum_mask_size`.")
+                print("\t Returning `chans=None` instead.")
             return None
         return [self.channels[mask][0], self.channels[mask][-1]]
 
@@ -727,15 +729,251 @@ class disk_observation(imagecube):
             kw['p0'] = kw['p0'][:-1]
         if not tapered_powerlaw:
             kw['p0'] = kw['p0'][:2] + kw['p0'][4:]
-        popt, copt = curve_fit(disk_observation.tapered_powerlaw, r, z, **kw)
-        copt = np.diag(copt)**0.5
+        try:
+            func = disk_observation.tapered_powerlaw
+            popt, copt = curve_fit(func, r, z, **kw)
+            copt = np.diag(copt)**0.5
+        except RuntimeError:
+            if self.verbose:
+                print("WARNING: Failed to fit the data. Returning `p0`.")
+            popt = kw['p0']
+            copt = [np.nan for _ in popt]
         return popt, copt
 
-    def fit_emission_surface_MCMC(self):
+    def fit_emission_surface_MCMC(self, r, z, dz=None, tapered_powerlaw=True,
+                                  include_cavity=False, p0=None, nwalkers=12,
+                                  nburnin=500, nsteps=500, scatter=1e-3,
+                                  priors=None, returns=None, plots=None,
+                                  curve_fit_kwargs=None,):
         """
+        Fit the inferred emission surface with a tapered power law of the form
+
+        .. math::
+            z(r) = z_0 \, \left( \frac{r}{1^{\prime\prime}} \right)^{\psi}
+            \times \exp \left( -\left[ \frac{r}{r_{\rm taper}}
+            \right]^{\psi_{\rm taper}} \right)
+
+        where a single power law profile is recovered when
+        :math:`r_{\rm taper} \rightarrow \infty`, and can be forced using the
+        ``tapered_powerlaw=False`` argument.
+
+        We additionally allow for an inner cavity, :math:`r_{\rm cavity}`,
+        inside which all emission heights are set to zero, and the radial range
+        is shifted such that :math:`r^{\prime} = r - r_{\rm cavity}`. This can
+        be toggled with the ``include_cavity`` argument.
+
+        The fitting (or more acurately the estimation of the posterior
+        distributions) is performed with ``emcee``. If starting positions are
+        not provided, will use ``fit_emission_surface`` to estimate starting
+        positions.
+
+        The priors are provided by a dictionary where the keys are the relevant
+        argument names. Each param is described by two values and the type of
+        prior. For a flat prior, ``priors['name']=[min_val, max_val, 'flat']``,
+        while for a Gaussian prior,
+        ``priors['name']=[mean_val, std_val, 'gaussian']``.
+
+        Args:
+            r (array): An array of radius values in [arcsec].
+            z (array): An array of corresponding z values in [arcsec].
+            dz (optional[array]): An array of uncertainties for the z values in
+                [arcsec]. If nothing is given, assume an uncertainty equal to
+                the pixel scale of the attached cube.
+            tapered_powerlaw (optional[bool]): Whether to include a tapered
+                component to the powerlaw.
+            include_cavity (optional[bool]): Where to include an inner cavity.
+            p0 (optional[list]): Starting guesses for the fit. If nothing is
+                provided, will try to guess from the results of
+                ``fit_emission_surface``.
+            nwalkers (optional[int]): Number of walkers for the MCMC.
+            nburnin (optional[int]): Number of steps to take to burn in.
+            nsteps (optional[int]): Number of steps used to sample the PDF.
+            scatter (optional[float]): Relative scatter used to randomize the
+                starting positions of the walkers.
+            priors (optional[dict]): A dictionary of priors to use for the
+                fitting.
+            returns (optional[list]): A list of properties to return. Can
+                include: ``'samples'``, for the array of PDF samples;
+                ``'percentiles'``, for the 16th, 50th and 84th percentiles of
+                the PDF; ``'lnprob'`` for values of the log-probablity for each
+                of the PDF samples and ``'walkers'`` for the walkers.
+            plots (optional[list]): A list of plots to make, including
+                ``'corner'`` for the standard corner plot, or ``'walkers'`` for
+                the trace of the walkers.
+            curve_fit_kwargs (optional[dict]): Kwargs to pass to
+                ``scipy.optimize.curve_fit`` if the ``p0`` values are estimated
+                through ``fit_emision_surface``.
+
+        Returns:
+            Dependent on the ``returns`` argument.
+        """
+        import emcee
+
+        # Remove any NaNs.
+        nan_mask = np.isfinite(r) & np.isfinite(z)
+        if dz is not None:
+            nan_mask = nan_mask * np.isfinite(dz)
+            r, z, dz = r[nan_mask], z[nan_mask], dz[nan_mask]
+        else:
+            r, z = r[nan_mask], z[nan_mask]
+
+        # Define the initial guesses.
+        if p0 is None:
+            p0, _ = self.fit_emission_surface(r, z, dz, tapered_powerlaw,
+                                              include_cavity, curve_fit_kwargs)
+        nwalkers = max(nwalkers, 2 * len(p0))
+
+        # Define the labels.
+        labels = ['z0', 'psi']
+        if tapered_powerlaw:
+            if len(p0) < 4:
+                raise ValueError("`p0` too short for a tapered powerlaw.")
+            labels += ['r_taper', 'q_taper']
+        if include_cavity:
+            if not len(p0) % 2:
+                raise ValueError("Even number of `p0` values; no `r_cavity`.")
+            if p0[-1] <= 0.0:
+                p0[-1] = 0.5
+            labels += ['r_cavity']
+        if self.verbose:
+            print("Assuming p0 = {}.".format(labels))
+            time.sleep(0.5)
+
+        # Set the priors for the MCMC.
+        priors = {} if priors is None else priors
+        priors['z0'] = priors.pop('z0', [0.0, 5.0, 'flat'])
+        priors['psi'] = priors.pop('psi', [0.0, 5.0, 'flat'])
+        priors['r_taper'] = priors.pop('r_taper', [0.0, 15.0, 'flat'])
+        priors['q_taper'] = priors.pop('q_taper', [0.0, 5.0, 'flat'])
+        priors['r_cavity'] = priors.pop('r_cavity', [0.0, 15.0, 'flat'])
+
+        # Check the uncertainties (/weights).
+        dz = np.ones(z.size) * self.dpix if dz is None else dz
+
+        # Set the starting positions for the walkers.
+        p0 = disk_observation._random_p0(p0, scatter, nwalkers)
+
+        sampler = emcee.EnsembleSampler(nwalkers, p0.shape[1],
+                                        self._ln_probability,
+                                        args=(r, z, dz, labels, priors))
+        sampler.run_mcmc(p0, nburnin + nsteps, progress=True)
+        samples = sampler.chain[:, -int(nsteps):]
+        samples = samples.reshape(-1, samples.shape[-1])
+        walkers = sampler.chain.T
+
+        # Diagnostic plots.
+        plots = [] if plots is None else plots
+        if 'walkers' in plots:
+            disk_observation._plot_walkers(walkers, labels, nburnin)
+        if 'corner' in plots:
+            disk_observation._plot_corner(samples, labels)
+
+        # Generate the output.
+        if returns is None:
+            returns = ['percentiles']
+        to_return = []
+        for r in returns:
+            if r == 'walkers':
+                to_return += [walkers]
+            if r == 'samples':
+                to_return += [samples]
+            if r == 'lnprob':
+                to_return += [sampler.lnprobability[nburnin:]]
+            if r == 'percentiles':
+                to_return += [np.percentile(samples, [16, 50, 84], axis=0)]
+        return to_return if len(to_return) > 1 else to_return[0]
+
+    def _ln_probability(self, theta, r, z, dz, labels, priors):
+        """
+        Log-probabiliy function for the emission surface fitting.
+
+        Args:
+            theta (array):
+            r (array):
+            z (array):
+            dz (array):
+            labels (list): List of label names.
+            priors (dict): A dictionary of prior definitions. See ``_ln_prior``
+                for more information on the format.
+
+        Returns:
+            lnx2 (float): Log-probaility value.
         """
 
+        lnp = 0.0
+        for label, t in zip(labels, theta):
+            lnp += disk_observation._ln_prior(priors[label], t)
+        if not np.isfinite(lnp):
+            return lnp
+
+        z0, q = theta[0], theta[1]
+        try:
+            r_taper = theta[labels.index('r_taper')]
+            q_taper = theta[labels.index('q_taper')]
+        except ValueError:
+            r_taper = np.inf
+            q_taper = 1.0
+        try:
+            r_cavity = theta[labels.index('r_cavity')]
+        except ValueError:
+            r_cavity = 0.0
+
+        model = disk_observation.tapered_powerlaw(r, z0, q, r_taper,
+                                                  q_taper, r_cavity)
+
+        lnx2 = -0.5 * np.sum(np.power((z - model) / dz, 2)) + lnp
+        return lnx2 if np.isfinite(lnx2) else -np.inf
+
     # -- Static Methods -- #
+
+    @staticmethod
+    def _plot_corner(samples, labels):
+        """Make a corner plot."""
+        try:
+            import corner
+        except ImportError:
+            print("Must install `corner` to make corner plots.")
+        corner.corner(samples, labels=labels, show_titles=True)
+
+    @staticmethod
+    def _plot_walkers(walkers, labels, nburnin):
+        import matplotlib.pyplot as plt
+        for param, label in zip(walkers, labels):
+            fig, ax = plt.subplots()
+            for walker in param.T:
+                ax.plot(walker, alpha=0.1)
+            ax.axvline(nburnin)
+            ax.set_ylabel(label)
+            ax.set_xlabel('Steps')
+
+    @staticmethod
+    def _random_p0(p0, scatter, nwalkers):
+        """Get the starting positions."""
+        p0 = np.squeeze(p0)
+        dp0 = np.random.randn(nwalkers * len(p0)).reshape(nwalkers, len(p0))
+        dp0 = np.where(p0 == 0.0, 1.0, p0)[None, :] * (1.0 + scatter * dp0)
+        return np.where(p0[None, :] == 0.0, dp0 - 1.0, dp0)
+
+    @staticmethod
+    def _ln_prior(prior, theta):
+        """
+        Log-prior function. This is provided by two values and the type of
+        prior. For a flat prior, ``prior=[min_val, max_val, 'flat']``, while
+        for a Gaussianprior, ``prior=[mean_val, std_val, 'gaussian']``.
+
+        Args:
+            prior (tuple): Prior description.
+            theta (float): Variable value.
+
+        Returns:
+            lnp (float): Log-prior probablity value.
+        """
+        if prior[2] == 'flat':
+            if not prior[0] <= theta <= prior[1]:
+                return -np.inf
+            return 0.0
+        lnp = -0.5 * ((theta - prior[0]) / prior[1])**2
+        return lnp - np.log(prior[1] * np.sqrt(2.0 * np.pi))
 
     @staticmethod
     def _pack_arguments(r, z, Fnu=None, v=None):
