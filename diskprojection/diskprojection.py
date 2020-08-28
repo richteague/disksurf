@@ -583,7 +583,7 @@ class disk_observation(imagecube):
             print("WARNING: `nchan` larger than half the spectral axis.")
         rms = np.nanstd([spectrum[:nchan], spectrum[-nchan:]])
         mask = abs(spectrum) > nsigma * rms
-        return [self.channels[mask][0], self.channels[mask][-1] + 1]
+        return [self.channels[mask][0], self.channels[mask][-1]]
 
     def estimate_rolling_stats_window(self, r, nbeams=1.0, check_ordered=True):
         """
@@ -723,6 +723,10 @@ class disk_observation(imagecube):
         popt, copt = curve_fit(disk_observation.tapered_powerlaw, r, z, **kw)
         copt = np.diag(copt)**0.5
         return popt, copt
+
+    def fit_emission_surface_MCMC(self):
+        """
+        """
 
     # -- Static Methods -- #
 
