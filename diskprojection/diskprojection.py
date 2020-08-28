@@ -741,10 +741,10 @@ class disk_observation(imagecube):
         return popt, copt
 
     def fit_emission_surface_MCMC(self, r, z, dz=None, tapered_powerlaw=True,
-                                  include_cavity=False, p0=None, nwalkers=12,
-                                  nburnin=500, nsteps=500, scatter=1e-3,
+                                  include_cavity=False, p0=None, nwalkers=64,
+                                  nburnin=1000, nsteps=500, scatter=1e-3,
                                   priors=None, returns=None, plots=None,
-                                  curve_fit_kwargs=None,):
+                                  curve_fit_kwargs=None, niter=1):
         """
         Fit the inferred emission surface with a tapered power law of the form
 
@@ -793,10 +793,11 @@ class disk_observation(imagecube):
             priors (optional[dict]): A dictionary of priors to use for the
                 fitting.
             returns (optional[list]): A list of properties to return. Can
-                include: ``'samples'``, for the array of PDF samples;
+                include: ``'samples'``, for the array of PDF samples (default);
                 ``'percentiles'``, for the 16th, 50th and 84th percentiles of
                 the PDF; ``'lnprob'`` for values of the log-probablity for each
-                of the PDF samples and ``'walkers'`` for the walkers.
+                of the PDF samples; 'median' for the median value of the PDFs
+                and ``'walkers'`` for the walkers.
             plots (optional[list]): A list of plots to make, including
                 ``'corner'`` for the standard corner plot, or ``'walkers'`` for
                 the trace of the walkers.
@@ -819,8 +820,16 @@ class disk_observation(imagecube):
 
         # Define the initial guesses.
         if p0 is None:
-            p0, _ = self.fit_emission_surface(r, z, dz, tapered_powerlaw,
-                                              include_cavity, curve_fit_kwargs)
+            # p0, _ = self.fit_emission_surface(r, z, dz, tapered_powerlaw,
+            #                                   include_cavity,
+            #                                   curve_fit_kwargs)
+            p0 = [0.3, 1.0, 1.0, 1.0, 0.05]
+            if not include_cavity and len(p0) % 2:
+                p0 = p0[:-1]
+            if not tapered_powerlaw:
+                p0 = p0[:2] + p0[4:]
+            niter += 1
+
         nwalkers = max(nwalkers, 2 * len(p0))
 
         # Define the labels.
@@ -851,14 +860,16 @@ class disk_observation(imagecube):
         dz = np.ones(z.size) * self.dpix if dz is None else dz
 
         # Set the starting positions for the walkers.
-        p0 = disk_observation._random_p0(p0, scatter, nwalkers)
 
-        sampler = emcee.EnsembleSampler(nwalkers, p0.shape[1],
-                                        self._ln_probability,
-                                        args=(r, z, dz, labels, priors))
-        sampler.run_mcmc(p0, nburnin + nsteps, progress=True)
-        samples = sampler.chain[:, -int(nsteps):]
-        samples = samples.reshape(-1, samples.shape[-1])
+        for _ in range(niter):
+            p0 = disk_observation._random_p0(p0, scatter, nwalkers)
+            sampler = emcee.EnsembleSampler(nwalkers, p0.shape[1],
+                                            self._ln_probability,
+                                            args=(r, z, dz, labels, priors))
+            sampler.run_mcmc(p0, nburnin + nsteps, progress=True)
+            samples = sampler.chain[:, -int(nsteps):]
+            samples = samples.reshape(-1, samples.shape[-1])
+            p0 = np.median(samples, axis=0)
         walkers = sampler.chain.T
 
         # Diagnostic plots.
@@ -869,10 +880,8 @@ class disk_observation(imagecube):
             disk_observation._plot_corner(samples, labels)
 
         # Generate the output.
-        if returns is None:
-            returns = ['percentiles']
         to_return = []
-        for r in returns:
+        for r in ['samples'] if returns is None else np.atleast_1d(returns):
             if r == 'walkers':
                 to_return += [walkers]
             if r == 'samples':
@@ -881,6 +890,8 @@ class disk_observation(imagecube):
                 to_return += [sampler.lnprobability[nburnin:]]
             if r == 'percentiles':
                 to_return += [np.percentile(samples, [16, 50, 84], axis=0)]
+            if r == 'median':
+                to_return += [np.median(samples, axis=0)]
         return to_return if len(to_return) > 1 else to_return[0]
 
     def _ln_probability(self, theta, r, z, dz, labels, priors):
@@ -1069,12 +1080,12 @@ class disk_observation(imagecube):
 
     @staticmethod
     def powerlaw(r, z0, q, r_cavity=0.0):
-        """Standard poewr law profile."""
-        f = z0 * (r - r_cavity)**q
-        return np.where(r >= r_cavity, f, 0.0)
+        """Standard power law profile."""
+        return z0 * np.clip(r - r_cavity, a_min=0.0, a_max=None)**q
 
     @staticmethod
     def tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0):
         """Tapered power law profile."""
-        f = disk_observation.powerlaw(r, z0, q, r_cavity)
-        return f * np.exp(-(r / r_taper)**q_taper)
+        rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
+        f = disk_observation.powerlaw(rr, z0, q)
+        return f * np.exp(-(rr / r_taper)**q_taper)
