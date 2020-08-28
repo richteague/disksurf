@@ -544,7 +544,8 @@ class disk_observation(imagecube):
                 break
         return 0.0 if r_min == r[0] else r_min, r_max
 
-    def estimate_channel_range(self, average='mean', nsigma=5.0, nchan=None):
+    def estimate_channel_range(self, average='mean', nsigma=5.0, nchan=None,
+                               minimum_mask_size=5):
         """
         Estimate the channel range to use for the emission surface inference.
         This is done by calculating a spectrum based on the average pixel value
@@ -565,6 +566,8 @@ class disk_observation(imagecube):
             nsigma (optional[float]): The RMS factor used to clip channels.
             nchan (optional[int]): The number of first and last channels to use
                 to estimate the standard deviation of the spectrum.
+            minimum_mask_size (optional[int]): If the mask size is less than
+                 this value, return ``None`` and print a warning.
 
         Returns:
             chans (list): A tuple of first and last channels to use for the
@@ -583,6 +586,10 @@ class disk_observation(imagecube):
             print("WARNING: `nchan` larger than half the spectral axis.")
         rms = np.nanstd([spectrum[:nchan], spectrum[-nchan:]])
         mask = abs(spectrum) > nsigma * rms
+        if sum(mask) < minimum_mask_size:
+            if self.verbose:
+                print("WARNING: Mask smaller than `minimum_mask_size`.")
+            return None
         return [self.channels[mask][0], self.channels[mask][-1]]
 
     def estimate_rolling_stats_window(self, r, nbeams=1.0, check_ordered=True):
