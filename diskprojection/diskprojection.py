@@ -820,9 +820,6 @@ class disk_observation(imagecube):
 
         # Define the initial guesses.
         if p0 is None:
-            # p0, _ = self.fit_emission_surface(r, z, dz, tapered_powerlaw,
-            #                                   include_cavity,
-            #                                   curve_fit_kwargs)
             p0 = [0.3, 1.0, 1.0, 1.0, 0.05]
             if not include_cavity and len(p0) % 2:
                 p0 = p0[:-1]
