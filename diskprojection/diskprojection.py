@@ -25,6 +25,8 @@ class disk_observation(imagecube):
     def __init__(self, path, FOV=None):
         super().__init__(path=path, FOV=FOV)
 
+
+
     def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, chans=None,
                              r_min=None, r_max=None, smooth=0.5,
                              return_sorted=True, smooth_threshold_kwargs=None,
@@ -38,7 +40,7 @@ class disk_observation(imagecube):
             PA (float): Disk position angle in [degrees].
             x0 (optional[float]): Disk offset along the x-axis in [arcsec].
             y0 (optional[float]): Disk offset along the y-axis in [arcsec].
-            chans (optional[tuple]): First and last channels to include in the
+            chans (optional[list]): First and last channels to include in the
                 inference.
             r_min (optional[float]): Minimuim radius in [arcsec] of values to
                 return. Default is all possible values.
@@ -138,7 +140,7 @@ class disk_observation(imagecube):
                     Fnu = data[c_idx, y_idx[-1], x_idx]
                 except (ValueError, IndexError):
                     r, z, Fnu = np.nan, np.nan, np.nan
-                peaks += [[r, z, Fnu, self.velax[c_idx]]]
+                peaks += [[r, z, Fnu, self.velax[chans[0]:chans[1]+1][c_idx]]]
         peaks = np.squeeze(peaks).T
         peaks = peaks[:, np.isfinite(peaks[2])]
 
