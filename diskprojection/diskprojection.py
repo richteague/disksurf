@@ -6,9 +6,213 @@ of molecular line emission. This uses the method presented in Pinte et al.
 from astropy.convolution import convolve, Gaussian1DKernel
 from scipy.interpolate import interp1d
 from .detect_peaks import detect_peaks
+import matplotlib.pyplot as plt
 from gofish import imagecube
 import numpy as np
 import time
+
+
+class surface(object):
+    """
+    A container for the emission surface returned by detect_peaks.
+
+    Args:
+        TBD
+    """
+
+    def __init__(self, r, z, Fnu, v, rms):
+        self.r = np.squeeze(r)
+        self.z = np.squeeze(z)
+        self.Fnu = np.squeeze(Fnu)
+        self.v = np.squeeze(v)
+        self.rms = rms
+        self.sort_data()
+        self.mask = np.ones(self.r.size).astype('bool')
+
+    def sort_data(self):
+        """Sort the data in increasing radius."""
+        idxs = np.argsort(self.r)
+        self.r = self.r[idxs]
+        self.z = self.z[idxs]
+        self.Fnu = self.Fnu[idxs]
+        self.v = self.v[idxs]
+
+    @property
+    def zr(self):
+        return self.z / self.r
+
+    @property
+    def snr(self):
+        return self.Fnu / self.rms
+
+    # -- MASKING FUNCTIONS -- #
+
+    @property
+    def masked_r(self):
+        return self.r[self.mask]
+
+    @property
+    def masked_z(self):
+        return self.z[self.mask]
+
+    @property
+    def masked_Fnu(self):
+        return self.Fnu[self.mask]
+
+    @property
+    def masked_v(self):
+        return self.v[self.mask]
+
+    @property
+    def masked_zr(self):
+        return self.zr[self.mask]
+
+    @property
+    def masked_snr(self):
+        return self.snr[self.mask]
+
+    def reset_mask(self):
+        """Reset the mask."""
+        self.mask = np.ones(self.r.size).astype('bool')
+
+    def mask_surface(self, min_r=None, max_r=None, min_z=None, max_z=None,
+                     min_zr=None, max_zr=None, min_Fnu=None, max_Fnu=None,
+                     min_v=None, max_v=None, min_snr=None, max_snr=None):
+        """
+        Mask the surface based on simple cuts to the parameters.
+
+        Args:
+            TBD
+        """
+        mask = self.mask.copy()
+        min_r = self.masked_r.min() if min_r is None else min_r
+        max_r = self.masked_r.max() if max_r is None else max_r
+        mask *= np.logical_and(self.r >= min_r, self.r <= max_r)
+        min_z = self.masked_z.min() if min_z is None else min_z
+        max_z = self.masked_z.max() if max_z is None else max_z
+        mask *= np.logical_and(self.z >= min_z, self.z <= max_z)
+        min_zr = self.masked_zr.min() if min_zr is None else min_zr
+        max_zr = self.masked_zr.max() if max_zr is None else max_zr
+        mask *= np.logical_and(self.zr >= min_zr, self.zr <= max_zr)
+        min_Fnu = self.masked_Fnu.min() if min_Fnu is None else min_Fnu
+        max_Fnu = self.masked_Fnu.max() if max_Fnu is None else max_Fnu
+        mask *= np.logical_and(self.Fnu >= min_Fnu, self.Fnu <= max_Fnu)
+        min_v = self.masked_v.min() if min_v is None else min_v
+        max_v = self.masked_v.max() if max_v is None else max_v
+        mask *= np.logical_and(self.v >= min_v, self.v <= max_v)
+        min_snr = self.masked_snr.min() if min_snr is None else min_snr
+        max_snr = self.masked_snr.max() if max_snr is None else max_snr
+        mask *= np.logical_and(self.snr >= min_snr, self.snr <= max_snr)
+        self.mask = mask
+
+    # -- BINNING FUNCTIONS -- #
+
+    def bin_surface(self, rvals=None, rbins=None, masked=True):
+        """
+        Bin the emisison surface onto a regular grid.
+
+        Args:
+            TBD
+
+        Returns:
+            TBD
+        """
+        return self.bin_parameter('z', rvals=rvals, rbins=rbins, masked=masked)
+
+    def bin_parameter(self, p, rvals=None, rbins=None, masked=True):
+        """
+        Bin the provided parameter onto a regular grid.
+
+        Args:
+            TBD
+
+        Returns:
+            TBD
+        """
+        r = self.masked_r.copy() if masked else self.r.copy()
+        x = eval('self.masked_{} if masked else self.{}'.format(p, p))
+        rvals, rbins = self._get_bins(rvals=rvals, rbins=rbins, masked=masked)
+        ridxs = np.digitize(r, rbins)
+        avg = [np.nanmean(x[ridxs == rr]) for rr in range(1, rbins.size)]
+        std = [np.nanstd(x[ridxs == rr]) for rr in range(1, rbins.size)]
+        return rvals, np.squeeze(avg), np.squeeze(std)
+
+    def _get_bins(self, rvals=None, rbins=None, masked=True):
+        """Return the default bins - something with about 50 bins."""
+        if rvals is None and rbins is None:
+            r_min = self.masked_r.min() if masked else self.r.min()
+            r_max = self.masked_r.max() if masked else self.r.max()
+            rbins = np.linspace(r_min, r_max, 51)
+            rvals = 0.5 * (rbins[1:] + rbins[:-1])
+        elif rvals is None:
+            rvals = 0.5 * (rbins[1:] + rbins[:-1])
+        elif rbins is None:
+            rbins = 0.5 * np.diff(rvals).mean()
+            rbins = np.linspace(rvals[0]-rbins, rvals[-1]+rbins, rvals.size+1)
+        if not np.all(np.isclose(rvals, 0.5 * (rbins[1:] + rbins[:-1]))):
+            print("Non-uniform bins detected - some functions may fail.")
+        return rvals, rbins
+
+    # -- ROLLING AVERAGE FUNCTIONS -- #
+
+    def rolling_statistic(self, p, func=np.mean, window=0.1, masked=True):
+        """
+        Return the rolling statistic of the provided parameter.
+
+        Args:
+            TBD
+
+        Returns:
+            TBD
+        """
+        x = eval('self.masked_{} if masked else self.{}'.format(p, p))
+        w = self._get_rolling_stats_window(window=window, masked=masked)
+        e = int((w - 1) / 2)
+        xx = np.insert(x, 0, x[0] * np.ones(e))
+        xx = np.insert(xx, -1, x[-1] * np.ones(e))
+        return np.squeeze([func(xx[i-e+1:i+e+2]) for i in range(x.size)])
+
+    def _get_rolling_stats_window(self, window=0.1, masked=True):
+        """Size of the window used for rolling statistics."""
+        dr = np.diff(self.masked_r if masked else self.r)
+        dr = np.where(dr == 0.0, 1e-10, dr)
+        w = np.median(window / dr).astype('int')
+        return w if w % 2 else w + 1
+
+    # -- PLOTTING FUNCTIONS -- #
+
+    def plot_surface(self, ax=None, masked=True, return_fig=False, **kwargs):
+        """
+        Plot the emission surface.
+
+        Args:
+            TBD
+
+        Returns:
+            TBD
+        """
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            return_fig = False
+
+        r = self.masked_r if masked else self.r
+        z = self.masked_z if masked else self.z
+
+        kwargs['marker'] = kwargs.pop('marker', '.')
+        kwargs['color'] = kwargs.pop('color', 'k')
+        kwargs['alpha'] = kwargs.pop('alpha', 0.2)
+        xlim = kwargs.pop('xlim', (r.min(), r.max()))
+        ylim = kwargs.pop('ylim', (z.min(), z.max()))
+
+        ax.scatter(r, z, **kwargs)
+        ax.set_xlabel("Radius (arcsec)")
+        ax.set_ylabel("Height (arcsec)")
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim)
+
+        if return_fig:
+            return fig
 
 
 class disk_observation(imagecube):
@@ -24,8 +228,6 @@ class disk_observation(imagecube):
 
     def __init__(self, path, FOV=None):
         super().__init__(path=path, FOV=FOV)
-
-
 
     def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, chans=None,
                              r_min=None, r_max=None, smooth=0.5,
@@ -63,16 +265,48 @@ class disk_observation(imagecube):
         """
 
         # Remove bad inclination:
+
         if inc == 0.0:
             raise ValueError("Cannot infer height with face on disk.")
         if self.verbose and abs(inc) < 10.0:
-            print("WARNING: Inferences with such face on disk are poor.")
+            print("WARNING: Inferences with close to face on disk are poor.")
+        inc = abs(inc)
 
         # Determine the spatial and spectral region to fit.
+
         r_min = 0.0 if r_min is None else r_min
         r_max = self.xaxis.max() if r_max is None else r_max
         if r_min >= r_max:
             raise ValueError("`r_min` must be less than `r_max`.")
+
+        chans, velo, data = self._get_velocity_clip_data(chans=chans)
+        data = self._align_and_rotate_data(data=data, x0=x0, y0=y0, PA=PA)
+
+        # Get the masked data.
+
+        if smooth_threshold_kwargs is None:
+            smooth_threshold_kwargs = {}
+        data = self.radial_threshold(data, inc, **smooth_threshold_kwargs)
+
+        # Define the smoothing kernel.
+
+        if smooth > 0.0:
+            kernel = Gaussian1DKernel((smooth * self.bmaj) / self.dpix / 2.235)
+        else:
+            kernel = None
+
+        # Find all the peaks.
+
+        if self.verbose:
+            print("Detecting peaks...")
+        return self.detect_peaks(data=data, inc=inc, r_min=r_min, r_max=r_max,
+                                 chans=chans, kernel=kernel,
+                                 detect_peaks_kwargs=detect_peaks_kwargs)
+
+    # -- DATA MANIPULATION -- #
+
+    def _get_velocity_clip_data(self, chans=None):
+        """Velocity clip the data."""
         chans = [0, self.data.shape[0]-1] if chans is None else chans
         if len(chans) != 2:
             raise ValueError("`chans` must be a length 2 list of channels.")
@@ -83,10 +317,10 @@ class disk_observation(imagecube):
         if self.verbose:
             velo = [self.velax[chans[0]] / 1e3, self.velax[chans[1]] / 1e3]
             velo = [min(velo), max(velo)]
-            print("Using {:.2f} km/s to {:.2f} km/s,".format(velo[0], velo[1])
-                  + ' and {:.2f}" to {:.2f}".'.format(r_min, r_max))
+        return chans, velo, data
 
-        # Shift and rotate the data.
+    def _align_and_rotate_data(self, data, x0=None, y0=None, PA=None):
+        """Align and rotate the data."""
         if x0 != 0.0 or y0 != 0.0:
             if self.verbose:
                 print("Centering data cube...")
@@ -97,26 +331,13 @@ class disk_observation(imagecube):
             if self.verbose:
                 print("Rotating data cube...")
             data = disk_observation.rotate_image(data, PA)
+        return data
 
-        # Get the masked data.
-        if smooth_threshold_kwargs is None:
-            smooth_threshold_kwargs = {}
-        data = self.radial_threshold(data, inc, **smooth_threshold_kwargs)
-
-        # Default dicionary for kwargs.
+    def detect_peaks(self, data, inc, r_min, r_max, chans, kernel=None,
+                     detect_peaks_kwargs=None):
+        """Detect the peaks."""
         if detect_peaks_kwargs is None:
             detect_peaks_kwargs = {}
-
-        # Define the smoothing kernel.
-        if smooth > 0.0:
-            kernel = Gaussian1DKernel((smooth * self.bmaj) / self.dpix / 2.235)
-        else:
-            kernel = None
-
-        # Find all the peaks.
-        if self.verbose:
-            print("Detecting peaks...")
-
         peaks = []
         for c_idx in range(data.shape[0]):
             for x_idx in range(data.shape[2]):
@@ -143,12 +364,8 @@ class disk_observation(imagecube):
                 peaks += [[r, z, Fnu, self.velax[chans[0]:chans[1]+1][c_idx]]]
         peaks = np.squeeze(peaks).T
         peaks = peaks[:, np.isfinite(peaks[2])]
-
-        # Sort the values in increasing radius.
-        if return_sorted:
-            idxs = np.argsort(peaks[0])
-            peaks = [p[idxs] for p in peaks]
-        return peaks
+        return surface(r=peaks[0], z=peaks[1], Fnu=peaks[2], v=peaks[3],
+                       rms=self.estimate_RMS())
 
     def quick_peak_profile(self, inc, PA, data=None):
         """
@@ -221,54 +438,51 @@ class disk_observation(imagecube):
                             bounds_error=False, fill_value=0.0)(rvals)
         return np.where(rotated_data >= Fnu_clip, rotated_data, mask_value)
 
-    def clip_emission_surface(self, r, z, Fnu, v, min_zr=None, max_zr=None,
-                              min_Fnu=None, max_Fnu=None, min_v=None,
-                              max_v=None, return_mask=False):
+    def integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0, r_max=None):
         """
-        Clip the emission surface based on simple cuts.
+        Returns the integrated spectrum over a specified region.
 
         Args:
-            r (array): Array of radius values in [arcsec].
-            z (array): Array of height values in [arcsec].
-            Fnu (array): Array of flux densities in [Jy/beam].
-            v (array): Array of velocities in [m/s].
-            min_zr (optional[float]): Mimumum z/r value.
-            max_zr (optional[float]): Maximum z/r value.
-            min_Fnu (optional[float]): Minimum flux density value in [Jy/beam].
-            max_Fnu (optional[float]): Maximum flux density value in [Jy/beam].
-            min_v (optional[float]): Minimum velocity in [m/s].
-            max_v (optional[float]): Maximum velocity in [m/s].
-            return_mask (optional[bool]): If True, just return the mask,
-                otherwise return the mask applied to the arrays.
+            x0 (Optional[float]): Right Ascension offset in [arcsec].
+            y0 (Optional[float]): Declination offset in [arcsec].
+            inc (Optional[float]): Disk inclination in [deg].
+            PA (Optional[float]): Disk position angle in [deg].
+            r_max (Optional[float]): Radius to integrate out to in [arcsec].
 
         Returns:
-            r, z, Fnu, v (arrays): Arrays of radius, height, flux density and
-                velocity.
+            spectrum, uncertainty (array, array): Something about these.
         """
-        # positive r values only
-        mask = r > 0.0
+        rr = self.disk_coords(x0=x0, y0=y0, inc=inc, PA=PA)[0]
+        r_max = rr.max() if r_max is None else r_max
+        nbeams = np.where(rr <= r_max, 1, 0).sum() / self.pix_per_beam
+        spectrum = np.array([np.nansum(c[rr <= r_max]) for c in self.data])
+        spectrum *= self.beams_per_pix
+        uncertainty = np.sqrt(nbeams) * self.estimate_RMS()
+        return spectrum, uncertainty
 
-        # z/r cuts
-        if min_zr is not None:
-            mask = mask & (z / r >= min_zr)
-        if max_zr is not None:
-            mask = mask & (z / r <= max_zr)
+    def plot_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0, r_max=None):
+        """
+        Plot the integrated spectrum.
 
-        # flux value cuts
-        if min_Fnu is not None:
-            mask = mask & (Fnu >= min_Fnu)
-        if max_Fnu is not None:
-            mask = mask * (Fnu <= max_Fnu)
-
-        # velocity range
-        if min_v is not None:
-            mask = mask & (v >= min_v)
-        if max_v is not None:
-            mask = mask & (v <= max_v)
-
-        if return_mask:
-            return mask
-        return r[mask], z[mask], Fnu[mask], v[mask]
+        Args:
+            x0 (Optional[float]): Right Ascension offset in [arcsec].
+            y0 (Optional[float]): Declination offset in [arcsec].
+            inc (Optional[float]): Disk inclination in [deg].
+            PA (Optional[float]): Disk position angle in [deg].
+            r_max (Optional[float]): Radius to integrate out to in [arcsec].
+        """
+        x = self.velax.copy() / 1e3
+        y, dy = self.integrated_spectrum(x0, y0, inc, PA, r_max)
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        L = ax.step(x, y, where='mid')
+        ax.errorbar(x, y, dy, fmt=' ', color=L[0].get_color(), zorder=-10)
+        ax.set_xlabel("Velocity (km/s)")
+        ax.set_ylabel("Integrated Flux (Jy)")
+        ax.set_xlim(x[0], x[-1])
+        ax2 = ax.twiny()
+        ax2.set_xlim(0, x.size-1)
+        ax2.set_xlabel("Channel Index")
 
     def iterative_clip_emission_surface(self, r, z, Fnu=None, v=None,
                                         nsigma=1.0, niter=3, window=1.0,
@@ -309,86 +523,6 @@ class disk_observation(imagecube):
         mask = disk_observation.sigma_clip(to_return[1], nsigma=nsigma,
                                            niter=niter, window=window,
                                            min_sigma=min_sigma)
-        return disk_observation._return_arguments(to_return, mask, return_mask)
-
-    def clip_emission_height(self, r, z, Fnu=None, v=None, z_min=None,
-                             z_max=None, return_mask=False):
-        """
-        Clip the data based on absolute values on the emission height.
-
-        Args:
-            r (array): An array of radius values in [arcsec].
-            z (array): An array of corresponding z values in [arcsec].
-            Fnu (optional[array]): Array of flux densities in [Jy/beam].
-            v (optional[array]): Array of velocities in [m/s].
-            z_min (optional[float]): Minimum value of z to include in [arcsec].
-            z_max (optional[float]): Maximum value of z to include in [arcsec].
-            return_mask (optional[bool]): Return the mask rather than the
-                clipped arrays.
-
-        Returns:
-            r, z[, Fnu, v] (array, array[, array, array])
-        """
-        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
-        z_min = z.min() if z_min is None else z_min
-        z_max = z.max() if z_max is None else z_max
-        if not z_min < z_max:
-            raise ValueError("`z_min` must be smaller than `z_max`.")
-        mask = np.logical_and(z >= z_min, z <= z_max)
-        return disk_observation._return_arguments(to_return, mask, return_mask)
-
-    def clip_aspect_ratio(self, r, z, Fnu=None, v=None, zr_min=None,
-                          zr_max=None, return_mask=False):
-        """
-        Clip the data based on the aspect ratio of the emission, :math:`z/r`.
-
-        Args:
-            r (array): An array of radius values in [arcsec].
-            z (array): An array of corresponding z values in [arcsec].
-            Fnu (optional[array]): Array of flux densities in [Jy/beam].
-            v (optional[array]): Array of velocities in [m/s].
-            zr_min (optional[float]): Minimum aspect ratio to include.
-            zr_max (optional[float]): Maximum aspect ratio to include.
-            return_mask (optional[bool]): Return the mask rather than the
-                clipped arrays.
-
-        Returns:
-            r, z[, Fnu, v] (array, array[, array, array])
-        """
-        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
-        zr_min = -1e2 if zr_min is None else zr_min
-        zr_max = 1e2 if zr_max is None else zr_max
-        if not zr_min < zr_max:
-            raise ValueError("`zr_min` must be smaller than `zr_max`.")
-        mask = np.logical_and(z/r >= zr_min, z/r <= zr_max)
-        return disk_observation._return_arguments(to_return, mask, return_mask)
-
-    def clip_flux_density(self, r, z, Fnu, v=None, Fnu_min=None, Fnu_max=None,
-                          return_mask=False):
-        """
-        Clip the data based on the flux density, :math:`F_{\nu}`.
-
-        Args:
-            r (array): An array of radius values in [arcsec].
-            z (array): An array of corresponding z values in [arcsec].
-            Fnu (optional[array]): Array of flux densities in [Jy/beam].
-            v (optional[array]): Array of velocities in [m/s].
-            Fnu_min (optional[float]): Minimum flux density to include in
-                [Jy/beam].
-            Fnu_max (optional[float]): Maximum flux density to include in
-                [Jy/beam].
-            return_mask (optional[bool]): Return the mask rather than the
-                clipped arrays.
-
-        Returns:
-            r, z[, Fnu, v] (array, array[, array, array])
-        """
-        to_return = disk_observation._pack_arguments(r, z, Fnu, v)
-        Fnu_min = Fnu.min() if Fnu_min is None else Fnu_min
-        Fnu_max = Fnu.max() if Fnu_max is None else Fnu_max
-        if not Fnu_min < Fnu_max:
-            raise ValueError("`Fnu_min` must be smaller than `Fnu_max`.")
-        mask = np.logical_and(Fnu >= Fnu_min, Fnu <= Fnu_max)
         return disk_observation._return_arguments(to_return, mask, return_mask)
 
     def clip_rolling_scatter_threshold(self, r, z, Fnu=None, v=None,
@@ -595,28 +729,6 @@ class disk_observation(imagecube):
                 print("\t Returning `chans=None` instead.")
             return None
         return [self.channels[mask][0], self.channels[mask][-1]]
-
-    def estimate_rolling_stats_window(self, r, nbeams=1.0, check_ordered=True):
-        """
-        Estimate the window size for ``rolling_stats`` to match the requested
-        number of beam FWHMs.
-
-        Args:
-            r (list): A list of monotonically increasing radial points.
-            nbeams (optional[float]): Desired window size as a fraction of the
-                beam major FWHM.
-            check_ordered (optional[bool]): Check that ``r`` is monotonically
-                increasing. If not, raise a ``ValueError``.
-
-        Returns:
-            window_size (int): The size of the window that best reproduces the
-                requested scale.
-        """
-        dr = np.diff(r)
-        if check_ordered and any(dr < 0):
-            raise ValueError("Values in `r` are not monotonically increasing.")
-        dr = np.where(dr == 0.0, 1e-10, dr)
-        return np.median(nbeams * self.bmaj / dr).astype('int')
 
     def bin_in_radius(self, r, x, rbins=None, rvals=None, statistic='mean',
                       uncertainty='std'):
@@ -1049,23 +1161,6 @@ class disk_observation(imagecube):
         return shifted
 
     @staticmethod
-    def rolling_stats(x, window=51, average='mean'):
-        """Rolling average and standard deviation."""
-        w = window if window % 2 else window + 1
-        edge = int((w - 1) / 2)
-        xx = np.insert(x, 0, x[0] * np.ones(edge))
-        xx = np.insert(xx, -1, x[-1] * np.ones(edge))
-        if average.lower() == 'mean':
-            avg = np.mean
-        elif average.lower() == 'median':
-            avg = np.median
-        else:
-            raise ValueError("Unknown `average` value: '{}''.".format(average))
-        avg = np.squeeze([avg(xx[i+edge:i+w+edge]) for i in range(x.size)])
-        std = np.squeeze([np.std(xx[i+edge:i+w+edge]) for i in range(x.size)])
-        return avg, std
-
-    @staticmethod
     def sigma_clip(x, nsigma=1.0, niter=3, window=51, min_sigma=0.0):
         """Iterative sigma clipping, returns a mask."""
         xtmp = x.copy()
@@ -1084,7 +1179,7 @@ class disk_observation(imagecube):
 
     @staticmethod
     def tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0):
-        """Tapered power law profile."""
+        """Exponentially tapered power law profile."""
         rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
         f = disk_observation.powerlaw(rr, z0, q)
         return f * np.exp(-(rr / r_taper)**q_taper)
