@@ -18,7 +18,12 @@ GitHub repository and install that locally.
     cd diskprojection
     pip install .
 
-Useage
-******
+A PyPI version is coming soon.
 
-Tutorials are currently being written.
+.. toctree::
+   :maxdepth: 2
+   :caption: Tutorials
+
+   tutorials/tutorial_1
+   tutorials/tutorial_2
+   
