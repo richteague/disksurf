@@ -12,11 +12,11 @@ Installation
 Currently the only way to install ``diskprojection`` currently is to clone the
 GitHub repository and install that locally.
 
-.. code-block:: bash
+.. code-block::
 
-    $ git clone https://github.com/richteague/diskprojection.git
-    $ cd diskprojection
-    $ pip install .
+    git clone https://github.com/richteague/diskprojection.git
+    cd diskprojection
+    pip install .
 
 Useage
 ******
