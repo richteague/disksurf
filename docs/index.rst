@@ -20,10 +20,12 @@ GitHub repository and install that locally.
 
 A PyPI version is coming soon.
 
+Contents
+********
+
 .. toctree::
    :maxdepth: 2
    :caption: Tutorials
 
    tutorials/tutorial_1
    tutorials/tutorial_2
-   
