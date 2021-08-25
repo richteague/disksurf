@@ -1,2 +1,2 @@
-from .cube import observation
+from .observation import observation
 __all__ = ["observation"]
