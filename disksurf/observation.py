@@ -126,11 +126,11 @@ class observation(imagecube):
                 print("Centering data cube...")
             x0_pix = x0 / self.dpix
             y0_pix = y0 / self.dpix
-            data = disk_observation.shift_center(data, x0_pix, y0_pix)
+            data = observation.shift_center(data, x0_pix, y0_pix)
         if PA != 90.0 and PA != 270.0:
             if self.verbose:
                 print("Rotating data cube...")
-            data = disk_observation.rotate_image(data, PA)
+            data = observation.rotate_image(data, PA)
         return data
 
     def _detect_peaks(self, data, inc, r_min, r_max, chans, min_SNR=5.0,
@@ -411,15 +411,15 @@ class observation(imagecube):
         Returns:
             r, z[, Inu, v] (array, array[, array, array])
         """
-        to_return = disk_observation._pack_arguments(r, z, Inu, v)
+        to_return = observation._pack_arguments(r, z, Inu, v)
         idxs = np.argsort(to_return[0])
         to_return = [p[idxs] for p in to_return]
         window = int((window * self.bmaj) / np.diff(to_return[0]).mean())
         min_sigma = (min_sigma * self.bmaj)
-        mask = disk_observation.sigma_clip(to_return[1], nsigma=nsigma,
+        mask = observation.sigma_clip(to_return[1], nsigma=nsigma,
                                            niter=niter, window=window,
                                            min_sigma=min_sigma)
-        return disk_observation._return_arguments(to_return, mask, return_mask)
+        return observation._return_arguments(to_return, mask, return_mask)
 
     def clip_rolling_scatter_threshold(self, r, z, Inu=None, v=None,
                                        inc=90.0, nbeams=0.25, window=None,
@@ -455,16 +455,16 @@ class observation(imagecube):
         Returns:
             r, z[, Inu, v] (array, array[, array, array])
         """
-        to_return = disk_observation._pack_arguments(r, z, Inu, v)
+        to_return = observation._pack_arguments(r, z, Inu, v)
         if window is None:
             window = self.estimate_rolling_stats_window(to_return[0], 0.25)
-        _, z_std = disk_observation.rolling_stats(to_return[1], window=window)
+        _, z_std = observation.rolling_stats(to_return[1], window=window)
         scatter_threshold = nbeams * self.bmaj / np.sin(np.radians(inc))
         for idx, scatter in enumerate(z_std):
             if scatter > scatter_threshold:
                 break
         mask = to_return[0] < to_return[0][idx]
-        return disk_observation._return_arguments(to_return, mask, return_mask)
+        return observation._return_arguments(to_return, mask, return_mask)
 
     def estimate_radial_range_counts(self, r, min_counts=8, window=8,
                                      bin_in_radius_kwargs=None):
@@ -490,7 +490,7 @@ class observation(imagecube):
         kw['statistic'] = 'count'
         r_bins, N_bins, _ = self.bin_in_radius(r, r, **kw)
         if window > 1:
-            N_bins, _ = disk_observation.rolling_stats(N_bins, window)
+            N_bins, _ = observation.rolling_stats(N_bins, window)
         idx = np.argmax(N_bins)
 
         if N_bins[idx] < min_counts:
@@ -534,11 +534,11 @@ class observation(imagecube):
         Returns:
             r, z[, Inu, v] (array, array[, array, array])
         """
-        to_return = disk_observation._pack_arguments(r, z, Inu, v)
+        to_return = observation._pack_arguments(r, z, Inu, v)
         r_min, r_max = self.estimate_radial_range_counts(r, min_counts, window,
                                                          bin_in_radius_kwargs)
         mask = np.logical_and(r >= r_min, r <= r_max)
-        return disk_observation._return_arguments(to_return, mask, return_mask)
+        return observation._return_arguments(to_return, mask, return_mask)
 
     def estimate_radial_range(self, inc=0.0, PA=0.0, nsigma=5.0, nchan=None):
         """
@@ -632,7 +632,7 @@ class observation(imagecube):
     def tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0):
         """Exponentially tapered power law profile."""
         rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
-        f = disk_observation.powerlaw(rr, z0, q)
+        f = observation.powerlaw(rr, z0, q)
         return f * np.exp(-(rr / r_taper)**q_taper)
 
     # -- PLOTTING FUNCTIONS -- #
@@ -700,12 +700,71 @@ class observation(imagecube):
         ax.set_xlabel("Radius (arcsec)")
         ax.set_ylabel("Height (arcsec)")
         if colorbar:
+            fig.set_size_inches(fig.get_figwidth() * 1.2,
+                                fig.get_figheight(),
+                                forward=True)
             im = ax.scatter(r, z * np.nan, c=Tb, marker='.', vmin=min_T,
                             vmax=max_T, cmap='RdYlBu_r')
             cb = plt.colorbar(im, ax=ax, pad=0.02)
             cb.set_label("T (K)", rotation=270, labelpad=13)
 
         # Returns.
+
+        if return_fig:
+            return fig
+
+    def plot_channels(self, chans=None, velocities=None, return_fig=False):
+        """
+        Plot the channels within the channel range or velocity range.
+
+        Args:
+            chans
+            return_fig
+        """
+        from matplotlib.ticker import MaxNLocator
+        import matplotlib.pyplot as plt
+
+        # Parse the channel and velocity ranges.
+
+        if chans is not None and velocities is not None:
+            raise ValueError("Only specify `chans` or `velocities`.")
+        elif chans is None and velocities is None:
+            chans = [0, self.velax.size - 1]
+        elif velocities is not None:
+            chans = [abs(self.velax - velocities[0]).argmin(),
+                     abs(self.velax - velocities[1]).argmin()]
+        assert chans[0] >= 0 and chans[1] <= self.velax.size - 1
+
+        # Plot the channel map.
+
+        velocities = self.velax.copy()[chans[0]:chans[1]+1]
+        nrows = np.ceil(velocities.size / 5).astype(int)
+        fig, axs = plt.subplots(ncols=5, nrows=nrows, figsize=(11, 2*nrows+1),
+                                constrained_layout=True)
+        for a, ax in enumerate(axs.flatten()):
+            if a >= self.velax.size:
+                continue
+            ax.imshow(self.data[chans[0]+a], origin='lower',
+                      extent=self.extent, vmax=0.75*np.nanmax(self.data),
+                      vmin=0.0, cmap='binary_r')
+            ax.xaxis.set_major_locator(MaxNLocator(5))
+            ax.yaxis.set_major_locator(MaxNLocator(5))
+            ax.grid(ls='--', lw=1.0, alpha=0.2)
+            ax.text(0.05, 0.95, 'chan_idx = {:d}'.format(chans[0] + a),
+                    fontsize=9, color='w', ha='left', va='top',
+                    transform=ax.transAxes)
+            ax.text(0.95, 0.95, '{:.2f} km/s'.format(velocities[a] / 1e3),
+                    fontsize=9, color='w', ha='right', va='top',
+                    transform=ax.transAxes)
+            if ax != axs[-1, 0]:
+                ax.set_xticklabels([])
+                ax.set_yticklabels([])
+            else:
+                ax.set_xlabel('Offset (arcsec)')
+                ax.set_ylabel('Offset (arcsec)')
+        if axs.size != velocities.size:
+            for ax in axs.flatten()[-(axs.size - velocities.size):]:
+                ax.axis('off')
 
         if return_fig:
             return fig
@@ -740,7 +799,7 @@ class observation(imagecube):
         # just reflect the front side about the midplane, we will always
         # calculate this just in case.
 
-        r, z, _ = surface.bin_surface(side='front')
+        r, z, _ = surface.rolling_surface(side='front')
         z[np.logical_and(r >= surface.r_min, r <= surface.r_min)] = np.nan
         z = surface.convolve(z, smooth) if smooth is not None else z
         z_f = interp1d(r, z, bounds_error=False, fill_value=np.nan)
@@ -750,7 +809,7 @@ class observation(imagecube):
         if reflect:
             z_b = interp1d(r, -z, bounds_error=False, fill_value=np.nan)
         else:
-            r, z, _ = surface.bin_surface(side='back')
+            r, z, _ = surface.rolling_surface(side='back')
             z[np.logical_and(r >= surface.r_min, r <= surface.r_min)] = np.nan
             z = surface.convolve(z, smooth) if smooth is not None else z
             z_b = interp1d(r, z, bounds_error=False, fill_value=np.nan)
@@ -827,15 +886,6 @@ class observation(imagecube):
             ax.imshow(channel, origin='lower', extent=self.extent,
                       cmap='binary_r', vmin=0.0, vmax=0.75*data.max())
 
-            if side.lower() in ['front', 'both']:
-                toplot = surface.v(side='front') == vv
-                ax.scatter(surface.x(side='front')[toplot],
-                           surface.y(side='front', edge='far')[toplot],
-                           lw=0.0, color='b', marker='.')
-                ax.scatter(surface.x(side='front')[toplot],
-                           surface.y(side='front', edge='near')[toplot],
-                           lw=0.0, color='b', marker='.')
-
             if side.lower() in ['back', 'both']:
                 toplot = surface.v(side='back') == vv
                 ax.scatter(surface.x(side='back')[toplot],
@@ -844,6 +894,15 @@ class observation(imagecube):
                 ax.scatter(surface.x(side='back')[toplot],
                            surface.y(side='back', edge='near')[toplot],
                            lw=0.0, color='r', marker='.')
+
+            if side.lower() in ['front', 'both']:
+                toplot = surface.v(side='front') == vv
+                ax.scatter(surface.x(side='front')[toplot],
+                           surface.y(side='front', edge='far')[toplot],
+                           lw=0.0, color='b', marker='.')
+                ax.scatter(surface.x(side='front')[toplot],
+                           surface.y(side='front', edge='near')[toplot],
+                           lw=0.0, color='b', marker='.')
 
             ax.xaxis.set_major_locator(MaxNLocator(5))
             ax.yaxis.set_major_locator(MaxNLocator(5))

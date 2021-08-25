@@ -363,8 +363,8 @@ class surface(object):
 
     # -- BINNING FUNCTIONS -- #
 
-    def bin_surface(self, rvals=None, rbins=None, side='front', reflect=True,
-                    masked=True):
+    def binned_surface(self, rvals=None, rbins=None, side='front',
+                       reflect=True, masked=True):
         """
         Bin the emisison surface onto a regular grid. This is a simple wrapper
         to the ``bin_parameter`` function.
@@ -504,7 +504,7 @@ class surface(object):
     # -- FITTING FUNCTIONS -- #
 
     def fit_emission_surface(self, tapered_powerlaw=True, include_cavity=False,
-                             masked=True, side='front', return_fit=False,
+                             masked=True, side='front', return_model=False,
                              curve_fit_kwargs=None):
         """
         Fit the extracted emission surface with a tapered power law of the form
@@ -547,7 +547,7 @@ class surface(object):
             raise ValueError(f"Unknown `side` values {side}.")
         r = self.r(side=side, masked=masked)
         z = self.z(side=side, reflect=True, masked=masked)
-        dz = self.SNR(side=side, masked=masked)
+        dz = 1.0 / self.SNR(side=side, masked=masked)
 
         kw = {} if curve_fit_kwargs is None else curve_fit_kwargs
         kw['maxfev'] = kw.pop('maxfev', 100000)
@@ -569,7 +569,7 @@ class surface(object):
             popt = kw['p0']
             copt = [np.nan for _ in popt]
 
-        return (r, func(r, *popt)) if return_fit else (popt, copt)
+        return (r, func(r, *popt)) if return_model else (popt, copt)
 
     def fit_emission_surface_MCMC(self, masked=True, side='front',
                                   tapered_powerlaw=True,
@@ -583,7 +583,7 @@ class surface(object):
         .. math::
             z(r) = z_0 \, \left( \frac{r}{1^{\prime\prime}} \right)^{\psi}
             \times \exp \left( -\left[ \frac{r}{r_{\rm taper}}
-            \right]^{\psi_{\rm taper}} \right)
+            \right]^{q_{\rm taper}} \right)
 
         where a single power law profile is recovered when
         :math:`r_{\rm taper} \rightarrow \infty`, and can be forced using the
@@ -646,34 +646,29 @@ class surface(object):
 
         r = self.r(side=side, masked=masked)
         z = self.z(side=side, reflect=True, masked=masked)
-        dz = self.SNR(side=side, masked=masked)
+        dz = 1.0 / self.SNR(side=side, masked=masked)
         nan_mask = np.isfinite(r) & np.isfinite(z) & np.isfinite(dz)
         r, z, dz = r[nan_mask], z[nan_mask], dz[nan_mask]
 
-        # Define the initial guesses.
+        # Set the initial guess to the scipy.optimize.curve_fit result if
+        # nothing has been provided.
 
         if p0 is None:
-            p0 = [0.3, 1.0]
-            if tapered_powerlaw:
-                p0 += [1.0, 1.0]
-            if include_cavity:
-                p0 += [0.05]
-            niter += 1
+            p0 = self.fit_emission_surface(tapered_powerlaw=tapered_powerlaw,
+                                           include_cavity=include_cavity,
+                                           masked=masked, side=side,
+                                           return_model=False)[0]
 
         nwalkers = max(nwalkers, 2 * len(p0))
 
         # Define the labels.
+
         labels = ['z0', 'psi']
         if tapered_powerlaw:
-            if len(p0) < 4:
-                raise ValueError("`p0` too short for a tapered powerlaw.")
             labels += ['r_taper', 'q_taper']
         if include_cavity:
-            if not len(p0) % 2:
-                raise ValueError("Even number of `p0` values; no `r_cavity`.")
-            if p0[-1] <= 0.0:
-                p0[-1] = 0.5
             labels += ['r_cavity']
+        assert len(labels) == len(p0)
 
         # Set the priors for the MCMC.
 
@@ -708,17 +703,20 @@ class surface(object):
         # Generate the output.
 
         to_return = []
-        for r in ['samples'] if returns is None else np.atleast_1d(returns):
-            if r == 'walkers':
+        for tr in ['median'] if returns is None else np.atleast_1d(returns):
+            if tr == 'walkers':
                 to_return += [walkers]
-            if r == 'samples':
+            if tr == 'samples':
                 to_return += [samples]
-            if r == 'lnprob':
+            if tr == 'lnprob':
                 to_return += [sampler.lnprobability[nburnin:]]
-            if r == 'percentiles':
+            if tr == 'percentiles':
                 to_return += [np.percentile(samples, [16, 50, 84], axis=0).T]
-            if r == 'median':
+            if tr == 'median':
                 to_return += [np.median(samples, axis=0)]
+            if tr == 'model':
+                median = np.median(samples, axis=0)
+                to_return += [r, surface.parse_model(r, median, labels)]
         return to_return if len(to_return) > 1 else to_return[0]
 
     def _ln_probability(self, theta, r, z, dz, labels, priors):
@@ -728,6 +726,13 @@ class surface(object):
             lnp += surface._ln_prior(priors[label], t)
         if not np.isfinite(lnp):
             return lnp
+        model = surface.parse_model(r, theta, labels)
+        lnx2 = -0.5 * np.sum(np.power((z - model) / dz, 2)) + lnp
+        return lnx2 if np.isfinite(lnx2) else -np.inf
+
+    @staticmethod
+    def parse_model(r, theta, labels):
+        """Parse the model parameters."""
         z0, q = theta[0], theta[1]
         try:
             r_taper = theta[labels.index('r_taper')]
@@ -739,9 +744,7 @@ class surface(object):
             r_cavity = theta[labels.index('r_cavity')]
         except ValueError:
             r_cavity = 0.0
-        model = surface.tapered_powerlaw(r, z0, q, r_taper, q_taper, r_cavity)
-        lnx2 = -0.5 * np.sum(np.power((z - model) / dz, 2)) + lnp
-        return lnx2 if np.isfinite(lnx2) else -np.inf
+        return surface.tapered_powerlaw(r, z0, q, r_taper, q_taper, r_cavity)
 
     @staticmethod
     def powerlaw(r, z0, q, r_cavity=0.0):
@@ -821,16 +824,16 @@ class surface(object):
 
         if side.lower() not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
-        if side.lower() in ['front', 'both']:
-            r = self.r(side='front', masked=masked)
-            z = self.z(side='front', masked=masked)
-            ax.scatter(r, z, color='b', marker='.', alpha=0.2)
-            ax.scatter(np.nan, np.nan, color='b', marker='.', label='front')
         if side.lower() in ['back', 'both']:
             r = self.r(side='back', masked=masked)
             z = self.z(side='back', reflect=reflect, masked=masked)
             ax.scatter(r, z, color='r', marker='.', alpha=0.2)
             ax.scatter(np.nan, np.nan, color='r', marker='.', label='back')
+        if side.lower() in ['front', 'both']:
+            r = self.r(side='front', masked=masked)
+            z = self.z(side='front', masked=masked)
+            ax.scatter(r, z, color='b', marker='.', alpha=0.2)
+            ax.scatter(np.nan, np.nan, color='b', marker='.', label='front')
 
         # Plot the fit.
 
