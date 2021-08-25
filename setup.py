@@ -21,7 +21,7 @@ setup(
         "scipy",
         "numpy",
         "matplotlib",
-        "gofish",
+        "gofish >= 1.4.1",
         "astropy",
         "emcee",
         ],
