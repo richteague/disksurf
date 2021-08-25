@@ -7,15 +7,15 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setup(
-    name="diskprojection",
-    version="0.4",
+    name="disksurf",
+    version="0.1",
     author="Richard Teague",
     author_email="richard.d.teague@cfa.harvard.edu",
     description=("Infer and reproject a disk's 3D structure."),
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/richteague/diskprojection",
-    packages=["diskprojection"],
+    url="https://github.com/richteague/disksurf",
+    packages=["disksurf"],
     license="MIT",
     install_requires=[
         "scipy",

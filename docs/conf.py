@@ -17,9 +17,9 @@ sys.path.append(os.path.join(os.path.dirname(__name__), '..'))
 
 # -- Project information -----------------------------------------------------
 
-project = 'diskprojection'
+project = 'disksurf'
 copyright = '2021, Richard Teague'
-author = 'Richard Teague'
+author = 'Richard Teague, Jane Huang, Charles Law'
 
 # -- General configuration ---------------------------------------------------
 
