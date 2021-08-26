@@ -65,8 +65,7 @@ class observation(imagecube):
 
         if inc == 0.0:
             raise ValueError("Cannot infer height with face on disk.")
-        inc = abs(inc)
-        if self.verbose and inc < 10.0:
+        if self.verbose and abs(inc) < 10.0:
             print("WARNING: Inferences with close to face on disk are poor.")
 
         # Determine the spatial and spectral region to fit.
