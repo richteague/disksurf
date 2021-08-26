@@ -9,26 +9,36 @@ observations of molecular emission from a protoplanetary disk.
 Installation
 ************
 
-Currently the only way to install ``disksurf`` currently is to clone the
-GitHub repository and install that locally.
+To install ``disksurf`` we'd recommend using PyPI:
+
+.. code-block::
+
+    pip install disksurf
+
+Alternatively you can clone the repository and install that version.
 
 .. code-block::
 
     git clone https://github.com/richteague/disksurf.git
-    cd diskprojection
+    cd disksurf
     pip install .
 
-A PyPI version is coming soon.
+Usage
+*****
 
-
-.. toctree::
-   :maxdepth: 2
-   :caption: API
-
+To guide you through how to use ``disksurf`` we've created a few tutorials.
 
 .. toctree::
    :maxdepth: 2
    :caption: Tutorials
 
    tutorials/tutorial_1
-   tutorials/tutorial_2
+
+Support
+*******
+
+If you are having issues, please open a `issue <https://github.com/richteague/disksurf/issues>`_ on the GitHub page.
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API
