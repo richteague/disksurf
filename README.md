@@ -2,6 +2,8 @@
 
 <p align='center'>
   <img src="HD163296_zeroth.png" width="793" height="549">
+  <br>
+  [![Documentation Status](https://readthedocs.org/projects/disksurf/badge/?version=latest)](https://disksurf.readthedocs.io/en/latest/?badge=latest)
 </p>
 
 ## What is it?
@@ -10,20 +12,14 @@ Functions to measure the height of optically thick emission, or photosphere, usi
 
 ## How do I install it?
 
-Currently the only way to install this is by cloning the repository then installing a local version.
+Grab the latest version from PyPI:
 
 ```
-$ git clone https://github.com/richteague/disksurf.git
-$ cd diskprojection
-$ pip install .
+$ pip install disksurf
 ```
 
 This has a couple of dependencies, namely [astropy](https://github.com/astropy/astropy) and [GoFish](https://github.com/richteague/gofish), which should be installed automatically if you don't have them.
 
 ## How do I use it?
 
-A more comprehensive document will be coming soon.
-
-#### Notes
-
-Part of the code uses `detect_peaks.py` from [Marcos Duarte](https://github.com/demotu/BMC).
+Follow our [tutorials](https://disksurf.readthedocs.io/en/latest/tutorials/tutorial_1.html) for a quick guide on how to use `disksurf` with your own data.
