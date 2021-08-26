@@ -3,7 +3,9 @@
 <p align='center'>
   <img src="HD163296_zeroth.png" width="793" height="549">
   <br>
-  [![Documentation Status](https://readthedocs.org/projects/disksurf/badge/?version=latest)](https://disksurf.readthedocs.io/en/latest/?badge=latest)
+  <a href='https://disksurf.readthedocs.io/en/latest/?badge=latest'>
+    <img src='https://readthedocs.org/projects/disksurf/badge/?version=latest' alt='Documentation Status' />
+  </a>
 </p>
 
 ## What is it?
