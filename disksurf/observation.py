@@ -104,6 +104,8 @@ class observation(imagecube):
                                       r_max=r_max, chans=chans, kernel=kernel,
                                       min_SNR=min_SNR,
                                       detect_peaks_kwargs=detect_peaks_kwargs)
+        if self.verbose:
+            print("Done!")
         return surface(*_surface, chans=chans, rms=self.estimate_RMS(),
                        x0=x0, y0=y0, inc=inc, PA=PA, r_min=r_min, r_max=r_max)
 

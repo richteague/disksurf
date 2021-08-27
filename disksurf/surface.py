@@ -215,7 +215,7 @@ class surface(object):
     def mask_surface(self, side='front', reflect=False, min_r=None, max_r=None,
                      min_z=None, max_z=None, min_zr=None, max_zr=None,
                      min_I=None, max_I=None, min_v=None, max_v=None,
-                     min_SNR=None, max_SNR=None):
+                     min_SNR=None, max_SNR=None, RMS=None):
         """
         Mask the surface based on simple cuts to the parameters.
 
@@ -232,6 +232,8 @@ class surface(object):
             max_v (Optional[float]): Maximum velocity in [m/s].
             min_snr (Optional[float]): Minimum SNR ratio.
             max_snr (Optional[float]): Maximum SNR ratio.
+            RMS (Optional[float]): Use this RMS value in place of the
+                ``self.rms`` value for calculating the SNR masks.
         """
 
         # Minimum or maximum radius value.
@@ -314,8 +316,12 @@ class surface(object):
                 mask = np.logical_and(v >= _min_v, v <= _max_v)
                 self._mask_b *= mask
 
-        # Minimum or maximum SNR.
+        # Minimum or maximum SNR. Here we allow the user to provide their own
+        # value of the RMS if they want to override the value provided when
+        # determining the surface.
 
+        _saved_rms = self.rms
+        self.rms = RMS or self.rms
         if min_SNR is not None or max_SNR is not None:
             if side in ['front', 'both']:
                 SNR = self.SNR(side='front', masked=False)
@@ -329,6 +335,7 @@ class surface(object):
                 _max_SNR = np.nanmax(SNR) if max_SNR is None else max_SNR
                 mask = np.logical_and(SNR >= _min_SNR, SNR <= _max_SNR)
                 self._mask_b *= mask
+        self.rms = _saved_rms
 
     def sigma_clip(self, p, side='front', reflect=True, masked=True,
                    nsigma=1.0, niter=3, window=0.1, min_sigma=0.0):
@@ -504,8 +511,8 @@ class surface(object):
     # -- FITTING FUNCTIONS -- #
 
     def fit_emission_surface(self, tapered_powerlaw=True, include_cavity=False,
-                             masked=True, side='front', return_model=False,
-                             curve_fit_kwargs=None):
+                             r0=None, dist=None, side='front', masked=True,
+                             return_model=False, curve_fit_kwargs=None):
         """
         Fit the extracted emission surface with a tapered power law of the form
 
@@ -529,11 +536,21 @@ class surface(object):
         each point as a weighting in the fit.
 
         Args:
-            tapered_powerlaw (optional[bool]): If ``True``, fit the tapered
+            tapered_powerlaw (Optional[bool]): If ``True``, fit the tapered
                 power law profile rather than a single power law function.
-            include_cavity (optional[bool]): If ``True``, include a cavity in
+            include_cavity (Optional[bool]): If ``True``, include a cavity in
                 the functional form, inside of which all heights are set to 0.
-            curve_fit_kwargs (optional[dict]): Keyword arguments to pass to
+            r0 (Optional[float]): The reference radius for :math:`z_0`.
+                Defaults to 1 arcsec, unless ``dist`` is provided, then
+                defaults to 100 au.
+            dist (Optional[float]): Convert all distances from [arcsec] to [au]
+                for the fitting. If this is provided, ``r_ref`` will change to
+                100 au unless specified by the user.
+            side (Optional[str]): Which 'side' of the disk to bin, must be one
+                of ``'both'``', ``'front'`` or ``'back'``.
+            masked (Optional[bool]): Whether to use the masked data points.
+                Default is ``True``.
+            curve_fit_kwargs (Optional[dict]): Keyword arguments to pass to
                 ``scipy.optimize.curve_fit``.
 
         Returns:
@@ -549,18 +566,30 @@ class surface(object):
         z = self.z(side=side, reflect=True, masked=masked)
         dz = 1.0 / self.SNR(side=side, masked=masked)
 
+        # If a distance is provided, convert all distances to [au]. We also
+        # change the reference radius to 100 au unless specified.
+
+        if dist is not None:
+            r, z, dz = r * dist, z * dist, dz * dist
+            r0 = r0 or 100.0
+        else:
+            dist = 1.0
+            r0 = r0 or 1.0
+
         kw = {} if curve_fit_kwargs is None else curve_fit_kwargs
         kw['maxfev'] = kw.pop('maxfev', 100000)
         kw['sigma'] = dz
 
-        kw['p0'] = [0.3, 1.0]
+        kw['p0'] = [0.3 * dist, 1.0]
         if tapered_powerlaw:
-            func = surface.tapered_powerlaw
-            kw['p0'] += [1.0, 1.0]
+            def func(r, *args):
+                return surface.tapered_powerlaw(r, *args, r0=r0)
+            kw['p0'] += [1.0 * dist, 1.0]
         else:
-            func = surface.powerlaw
+            def func(r, *args):
+                return surface.powerlaw(r, *args, r0=r0)
         if include_cavity:
-            kw['p0'] += [0.05]
+            kw['p0'] += [0.05 * dist]
 
         try:
             popt, copt = curve_fit(func, r, z, **kw)
@@ -571,8 +600,8 @@ class surface(object):
 
         return (r, func(r, *popt)) if return_model else (popt, copt)
 
-    def fit_emission_surface_MCMC(self, masked=True, side='front',
-                                  tapered_powerlaw=True,
+    def fit_emission_surface_MCMC(self, r0=None, dist=None, side='front',
+                                  masked=True, tapered_powerlaw=True,
                                   include_cavity=False, p0=None, nwalkers=64,
                                   nburnin=1000, nsteps=500, scatter=1e-3,
                                   priors=None, returns=None, plots=None,
@@ -581,7 +610,7 @@ class surface(object):
         Fit the inferred emission surface with a tapered power law of the form
 
         .. math::
-            z(r) = z_0 \, \left( \frac{r}{1^{\prime\prime}} \right)^{\psi}
+            z(r) = z_0 \, \left( \frac{r}{r_0} \right)^{\psi}
             \times \exp \left( -\left[ \frac{r}{r_{\rm taper}}
             \right]^{q_{\rm taper}} \right)
 
@@ -606,11 +635,12 @@ class surface(object):
         ``priors['name']=[mean_val, std_val, 'gaussian']``.
 
         Args:
-            r (array): An array of radius values in [arcsec].
-            z (array): An array of corresponding z values in [arcsec].
-            dz (optional[array]): An array of uncertainties for the z values in
-                [arcsec]. If nothing is given, assume an uncertainty equal to
-                the pixel scale of the attached cube.
+            r0 (Optional[float]): The reference radius for :math:`z_0`.
+                Defaults to 1 arcsec, unless ``dist`` is provided, then
+                defaults to 100 au.
+            dist (Optional[float]): Convert all distances from [arcsec] to [au]
+                for the fitting. If this is provided, ``r_ref`` will change to
+                100 au unless specified by the user.
             tapered_powerlaw (optional[bool]): Whether to include a tapered
                 component to the powerlaw.
             include_cavity (optional[bool]): Where to include an inner cavity.
@@ -650,14 +680,26 @@ class surface(object):
         nan_mask = np.isfinite(r) & np.isfinite(z) & np.isfinite(dz)
         r, z, dz = r[nan_mask], z[nan_mask], dz[nan_mask]
 
-        # Set the initial guess to the scipy.optimize.curve_fit result if
-        # nothing has been provided.
+        # If a distance is provided, convert all distances to [au]. We also
+        # change the reference radius to 100 au unless specified.
+
+        if dist is not None:
+            r, z, dz = r * dist, z * dist, dz * dist
+            r0 = r0 or 100.0
+        else:
+            dist = 1.0
+            r0 = r0 or 1.0
+
+        # Set the initial guess if not provided.
 
         if p0 is None:
-            p0 = self.fit_emission_surface(tapered_powerlaw=tapered_powerlaw,
-                                           include_cavity=include_cavity,
-                                           masked=masked, side=side,
-                                           return_model=False)[0]
+            p0 = [0.3 * dist, 1.0]
+            if tapered_powerlaw:
+                p0 += [1.0 * dist, 1.0]
+            if include_cavity:
+                p0 += [0.05 * dist]
+
+        # Default number of walkers to twice the number of free parameters.
 
         nwalkers = max(nwalkers, 2 * len(p0))
 
@@ -673,19 +715,20 @@ class surface(object):
         # Set the priors for the MCMC.
 
         priors = {} if priors is None else priors
-        priors['z0'] = priors.pop('z0', [0.0, 5.0, 'flat'])
+        priors['z0'] = priors.pop('z0', [0.0, 5.0 * dist, 'flat'])
         priors['psi'] = priors.pop('psi', [0.0, 5.0, 'flat'])
-        priors['r_taper'] = priors.pop('r_taper', [0.0, 15.0, 'flat'])
+        priors['r_taper'] = priors.pop('r_taper', [0.0, 2 * r.max(), 'flat'])
         priors['q_taper'] = priors.pop('q_taper', [0.0, 5.0, 'flat'])
-        priors['r_cavity'] = priors.pop('r_cavity', [0.0, 15.0, 'flat'])
+        priors['r_cavity'] = priors.pop('r_cavity', [0.0, r.max() / 2, 'flat'])
 
         # Set the starting positions for the walkers.
 
         for _ in range(niter):
             p0 = surface._random_p0(p0, scatter, nwalkers)
+            args = (r, z, dz, labels, priors, r0)
             sampler = emcee.EnsembleSampler(nwalkers, p0.shape[1],
                                             self._ln_probability,
-                                            args=(r, z, dz, labels, priors))
+                                            args=args)
             sampler.run_mcmc(p0, nburnin + nsteps, progress=True)
             samples = sampler.chain[:, -int(nsteps):]
             samples = samples.reshape(-1, samples.shape[-1])
@@ -719,19 +762,19 @@ class surface(object):
                 to_return += [r, surface.parse_model(r, median, labels)]
         return to_return if len(to_return) > 1 else to_return[0]
 
-    def _ln_probability(self, theta, r, z, dz, labels, priors):
+    def _ln_probability(self, theta, r, z, dz, labels, priors, r0):
         """Log-probabiliy function for the emission surface fitting."""
         lnp = 0.0
         for label, t in zip(labels, theta):
             lnp += surface._ln_prior(priors[label], t)
         if not np.isfinite(lnp):
             return lnp
-        model = surface.parse_model(r, theta, labels)
+        model = surface.parse_model(r, theta, labels, r0)
         lnx2 = -0.5 * np.sum(np.power((z - model) / dz, 2)) + lnp
         return lnx2 if np.isfinite(lnx2) else -np.inf
 
     @staticmethod
-    def parse_model(r, theta, labels):
+    def parse_model(r, theta, labels, r0):
         """Parse the model parameters."""
         z0, q = theta[0], theta[1]
         try:
@@ -744,18 +787,22 @@ class surface(object):
             r_cavity = theta[labels.index('r_cavity')]
         except ValueError:
             r_cavity = 0.0
-        return surface.tapered_powerlaw(r, z0, q, r_taper, q_taper, r_cavity)
+        return surface.tapered_powerlaw(r=r, z0=z0, q=q, r_taper=r_taper,
+                                        q_taper=q_taper, r_cavity=r_cavity,
+                                        r0=r0)
 
     @staticmethod
-    def powerlaw(r, z0, q, r_cavity=0.0):
+    def powerlaw(r, z0, q, r_cavity=0.0, r0=1.0):
         """Standard power law profile."""
-        return z0 * np.clip(r - r_cavity, a_min=0.0, a_max=None)**q
+        rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
+        return z0 * (rr / r0)**q
 
     @staticmethod
-    def tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0):
+    def tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0,
+                         r0=1.0):
         """Exponentially tapered power law profile."""
         rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
-        f = surface.powerlaw(rr, z0, q)
+        f = surface.powerlaw(rr, z0, q, r_cavity=0.0, r0=r0)
         return f * np.exp(-(rr / r_taper)**q_taper)
 
     @staticmethod
@@ -789,8 +836,8 @@ class surface(object):
 
     # -- PLOTTING FUNCTIONS -- #
 
-    def plot_surface(self, ax=None, masked=True, side='both',
-                     reflect=False, plot_fit=False, tapered_powerlaw=True,
+    def plot_surface(self, ax=None, side='both', reflect=False, masked=True,
+                     plot_fit=False, tapered_powerlaw=True,
                      include_cavity=False, return_fig=False):
         """
         Plot the emission surface.
