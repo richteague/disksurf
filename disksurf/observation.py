@@ -81,11 +81,12 @@ class observation(imagecube):
         # the x-axis. We can save this as a copy for user later for plotting
         # or repeated surface extractions.
 
+        key = (x0, y0, PA, chans.min(), chans.max())
         try:
-            data = self.data_aligned_rotated[(x0, y0, PA, chans[0], chans[-1])]
+            data = self.data_aligned_rotated[key]
         except KeyError:
             data = self._align_and_rotate_data(data=data, x0=x0, y0=y0, PA=PA)
-            self.data_aligned_rotated[(x0, y0, PA, chans[0], chans[-1])] = data
+            self.data_aligned_rotated[key] = data
 
         # Define the smoothing kernel.
 
@@ -111,12 +112,12 @@ class observation(imagecube):
     def _get_velocity_clip_data(self, chans=None):
         """Clip the data based on a provided channel range."""
         chans = chans or [0, self.data.shape[0] - 1]
-        if len(chans) != 2:
-            raise ValueError("`chans` must be a length 2 list of channels.")
-        if chans[1] >= self.data.shape[0]:
+        chans = np.atleast_2d(chans).astype('int')
+        if chans.min() < 0:
+            raise ValueError("`chans` has negative values.")
+        if chans.max() >= self.data.shape[0]:
             raise ValueError("`chans` extends beyond the number of channels.")
-        chans[0], chans[1] = int(min(chans)), int(max(chans))
-        return chans, self.data.copy()[chans[0]:chans[1]+1]
+        return chans, self.data.copy()[chans.min():chans.max()+1]
 
     def _align_and_rotate_data(self, data, x0=None, y0=None, PA=None):
         """Align and rotate the data."""
@@ -134,9 +135,7 @@ class observation(imagecube):
 
     def _detect_peaks(self, data, inc, r_min, r_max, chans, min_SNR=5.0,
                       kernel=None, return_back=True, detect_peaks_kwargs=None):
-        """
-        Detect the peaks.
-        """
+        """Wrapper for `detect_peaks.py`."""
 
         inc_rad = np.radians(inc)
         detect_peaks_kwargs = detect_peaks_kwargs or {}
@@ -164,11 +163,19 @@ class observation(imagecube):
 
         _surface = []
         for c_idx in range(data.shape[0]):
+
+            # Check that the channel is in one of the channel ranges. If not,
+            # we skip to the next channel index.
+
+            c_idx_tot = c_idx + chans.min()
+            if not any([ct[0] <= c_idx_tot <= ct[1] for ct in chans]):
+                continue
+
             for x_idx in range(x_idx_min, x_idx_max):
 
                 x_c = self.xaxis[x_idx]
                 mpd = detect_peaks_kwargs.get('mpd', 0.05 * abs(x_c))
-                v = self.velax[chans[0]:chans[1]+1][c_idx]
+                v = self.velax[c_idx_tot]
 
                 try:
 
@@ -416,8 +423,8 @@ class observation(imagecube):
         window = int((window * self.bmaj) / np.diff(to_return[0]).mean())
         min_sigma = (min_sigma * self.bmaj)
         mask = observation.sigma_clip(to_return[1], nsigma=nsigma,
-                                           niter=niter, window=window,
-                                           min_sigma=min_sigma)
+                                      niter=niter, window=window,
+                                      min_sigma=min_sigma)
         return observation._return_arguments(to_return, mask, return_mask)
 
     def clip_rolling_scatter_threshold(self, r, z, Inu=None, v=None,
@@ -789,7 +796,7 @@ class observation(imagecube):
         if side not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
 
-        velocities = np.unique(surface.v())
+        velocities = self.velax[surface.chans.min():surface.chans.max()+1]
         nrows = np.ceil(velocities.size / 5).astype(int)
         fig, axs = plt.subplots(ncols=5, nrows=nrows, figsize=(11, 2*nrows+1),
                                 constrained_layout=True)
@@ -870,12 +877,12 @@ class observation(imagecube):
         import matplotlib.pyplot as plt
         from matplotlib.ticker import MaxNLocator
 
-        velocities = np.unique(surface.v())
+        velocities = self.velax[surface.chans.min():surface.chans.max()+1]
         nrows = np.ceil(velocities.size / 5).astype(int)
         fig, axs = plt.subplots(ncols=5, nrows=nrows, figsize=(11, 2*nrows+1),
                                 constrained_layout=True)
 
-        velax = self.velax[surface.chans[0]:surface.chans[1]+1]
+        velax = self.velax[surface.chans.min():surface.chans.max()+1]
         data = self.data_aligned_rotated[surface.data_aligned_rotated_key]
 
         for vv, ax in zip(velocities, axs.flatten()):

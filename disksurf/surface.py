@@ -210,7 +210,7 @@ class surface(object):
 
     @property
     def data_aligned_rotated_key(self):
-        return (self.x0, self.y0, self.PA, self.chans[0], self.chans[1])
+        return (self.x0, self.y0, self.PA, self.chans.min(), self.chans.max())
 
     def mask_surface(self, side='front', reflect=False, min_r=None, max_r=None,
                      min_z=None, max_z=None, min_zr=None, max_zr=None,
