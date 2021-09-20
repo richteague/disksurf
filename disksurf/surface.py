@@ -759,7 +759,7 @@ class surface(object):
                 to_return += [np.median(samples, axis=0)]
             if tr == 'model':
                 median = np.median(samples, axis=0)
-                to_return += [r, surface.parse_model(r, median, labels)]
+                to_return += [r, surface.parse_model(r, median, labels, r0)]
         return to_return if len(to_return) > 1 else to_return[0]
 
     def _ln_probability(self, theta, r, z, dz, labels, priors, r0):
