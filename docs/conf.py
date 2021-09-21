@@ -41,6 +41,7 @@ autodoc_mock_imports = ['astropy',
                         'numpy',
                         'tqdm',
                         'matplotlib',
+                        'gofish',
                         ]
 
 # Add any paths that contain templates here, relative to this directory.
