@@ -27,18 +27,12 @@ To guide you through how to use ``disksurf`` we've created a few tutorials.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Tutorials
+   :caption: Contents
 
+   api
    tutorials/tutorial_1
-   user/api 
 
 Support
 *******
 
 If you are having issues, please open a `issue <https://github.com/richteague/disksurf/issues>`_ on the GitHub page.
-
-.. toctree::
-   :maxdepth: 2
-   :caption: API
-
-   user/api
