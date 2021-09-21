@@ -53,8 +53,8 @@ class observation(imagecube):
                 ``detect_peaks``.
 
         Returns:
-            surface instance: A ``disksurf.surface`` instance containing the
-                extracted emission surface.
+            A ``disksurf.surface`` instance containing the extracted emission
+            surface.
         """
 
         # Remove bad inclination:
@@ -276,8 +276,7 @@ class observation(imagecube):
             r_max (Optional[float]): Radius to integrate out to in [arcsec].
 
         Returns:
-            spectrum, uncertainty (array, array): The integrated intensity and
-                associated uncertainty in [Jy].
+            The integrated intensity and associated uncertainty in [Jy].
         """
         rr = self.disk_coords(x0=x0, y0=y0, inc=inc, PA=PA)[0]
         r_max = rr.max() if r_max is None else r_max
