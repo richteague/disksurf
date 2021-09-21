@@ -646,11 +646,13 @@ class surface(object):
     def fit_emission_surface(self, tapered_powerlaw=True, include_cavity=False,
                              r0=None, dist=None, side='front', masked=True,
                              return_model=False, curve_fit_kwargs=None):
-        """
+        r"""
         Fit the extracted emission surface with a tapered power law of the form
 
         .. math::
-            z(r) = z_0 \, \left( \frac{r}{1^{\prime\prime}} \right)^{\psi} \times \exp \left( -\left[ \frac{r}{r_{\rm taper}} \right]^{\psi_{\rm taper}} \right)
+            z(r) = z_0 \, \left( \frac{r}{1^{\prime\prime}} \right)^{\psi}
+            \times \exp \left( -\left[ \frac{r}{r_{\rm taper}}
+            \right]^{\psi_{\rm taper}} \right)
 
         where a single power law profile is recovered when
         :math:`r_{\rm taper} \rightarrow \infty`, and can be forced using the
@@ -737,7 +739,7 @@ class surface(object):
                                   nburnin=1000, nsteps=500, scatter=1e-3,
                                   priors=None, returns=None, plots=None,
                                   curve_fit_kwargs=None, niter=1):
-        """
+        r"""
         Fit the inferred emission surface with a tapered power law of the form
 
         .. math::
