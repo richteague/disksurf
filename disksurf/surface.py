@@ -4,21 +4,43 @@ import numpy as np
 
 class surface(object):
     """
-    A container for the emission surface returned by detect_peaks.
+    A container for the emission surface returned by ``detect_peaks``. This
+    class has been designed to be created by the ``get_emission_surface``
+    function and not by the user.
 
     Args:
-        r (array): Radial position in [arcsec].
-        z (array): Vertical position in [arcsec].
-        Inu (array): Intensity in [Jy/beam].
+        r_f (array): Radial position of the front surface in [arcsec].
+        z_f (array): Vertical position of the front surface in [arcsec].
+        I_f (array): Intensity along the front surface in [Jy/beam].
         v (array): Velocity in [km/s].
-        x (array): X-axis position of the peaks in [arcsec].
-        #
-        #
-        TBD
-        #
-        #
-        chans (list): The channel range used to extract the surface.
+        x (array): Distance along the major axis the point was extracted in
+            [arcsec].
+        y_n (array): Distance along the minor axis of the near peak for the
+            front surface in [arcsec].
+        y_f (array): Distance along the minor axis of the far peak for the
+            front surface in [arcsec].
+        r_b (array): Radial position of the back surface in [arcsec].
+        z_b (array): Vertical position of the back surface in [arcsec].
+        I_b (array): Intensity along the back surface in [Jy/beam].
+        y_n_b (array): Distance along the minor axis of the near peak for the
+            back surface in [arcsec].
+        y_f_b (array): Distance along the minor axis of the far peak for the
+            back surface in [arcsec].
+        chans (tuple): A tuple of the first and last channels used for the
+            emission surface extraction.
         rms (float): Noise in the cube in [Jy/beam].
+        x0 (float): Right ascencion offset used in the emission surface
+            extraction in [arcsec].
+        y0 (float): Declination offset used in the emission surface extraction
+            in [arcsec].
+        inc (float): Inclination of the disk used in the emission surface
+            extraction in [deg].
+        PA (float): Position angle of the disk used in the emission surface
+            extraction in [deg].
+        r_min (float): Minimum disk-centric radius used in the emission surface
+            extraction in [arcsec].
+        r_max (array): Maximum disk-centric radius used in the emission surface
+            extraction in [arcsec].
     """
 
     def __init__(self, r_f, z_f, I_f, v, x, y_n, y_f, r_b, z_b, I_b, y_n_b,
@@ -55,7 +77,18 @@ class surface(object):
         self.reset_mask()
 
     def r(self, side='front', masked=True):
-        """Radial cylindrical coordinate in [arcsec]."""
+        """
+        Radial cylindrical coordinate in [arcsec].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Radial cylindrical coordinates in [arcsec].
+        """
         if side not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
         r = np.empty(1)
@@ -74,7 +107,20 @@ class surface(object):
         return np.squeeze(r[1:])
 
     def z(self, side='front', reflect=False, masked=True):
-        """Vertical cylindrical coordinate in [arcsec]."""
+        """
+        Vertical cylindrical coordinate in [arcsec].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            reflect (optional[bool]): Whether to reflect the backside points
+                about the midplane. Defaults to ``False``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Vertical cylindrical coordinate in [arcsec].
+        """
         if side not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
         z = np.empty(1)
@@ -93,7 +139,18 @@ class surface(object):
         return np.squeeze(z[1:])
 
     def I(self, side='front', masked=True):
-        """Intensity at the (r, z) coordinate."""
+        """
+        Intensity at the (r, z) coordinate in [Jy/beam].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Intensity at the (r, z) coordinate in [Jy/beam].
+        """
         if side not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
         i = np.empty(1)
@@ -112,7 +169,18 @@ class surface(object):
         return np.squeeze(i[1:])
 
     def v(self, side='front', masked=True):
-        """Velocity that the (r, z) coordinate was extracted at in [m/s]."""
+        """
+        Velocity that the (r, z) coordinate was extracted at in [m/s].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Velocity that the (r, z) coordinate was extracted at in [m/s].
+        """
         if side not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
         v = np.empty(1)
@@ -131,7 +199,18 @@ class surface(object):
         return np.squeeze(v[1:])
 
     def x(self, side='front', masked=True):
-        """RA offset that the (r, z) coordinate was extracted in [arcsec]."""
+        """
+        RA offset that the (r, z) coordinate was extracted in [arcsec].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            RA offset that the (r, z) coordinate was extracted in [arcsec].
+        """
         if side not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
         x = np.empty(1)
@@ -150,7 +229,20 @@ class surface(object):
         return np.squeeze(x[1:])
 
     def y(self, side='front', edge='near', masked=True):
-        """Dec offset that the (r, z) coordinate was extracted in [arcsec]."""
+        """
+        Dec offset that the (r, z) coordinate was extracted in [arcsec].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            edge (optional[str]): Which of the edges to return, either the
+                ``'near'`` or ``'far'`` edge.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Dec offset that the (r, z) coordinate was extracted in [arcsec].
+        """
         if side not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
         if edge not in ['near', 'far']:
@@ -185,15 +277,46 @@ class surface(object):
         return np.squeeze(y[1:])
 
     def zr(self, side='front', reflect=True, masked=True):
-        """Inverse aspect ratio of the emission surface."""
+        """
+        Inverse aspect ratio (height divided by radius) of the emission
+        surface.
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            reflect (optional[bool]): Whether to reflect the backside points
+                about the midplane. Defaults to ``False``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Inverse aspect ratio of the emission surface.
+        """
         return self.z(side, reflect, masked) / self.r(side, masked)
 
     def SNR(self, side='front', masked=True):
-        """Signal-to-noise ratio for each coordinate."""
+        """
+        Signal-to-noise ratio for each coordinate.
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Signal-to-noise ratio for each coordinate.
+        """
         return self.I(side, masked) / self.rms
 
     def reset_mask(self, side='both'):
-        """Reset the mask."""
+        """
+        Reset the mask.
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+        """
         if side.lower() == 'front':
             self._mask_f = np.isfinite(self._z_f).astype('bool')
             self._mask_f *= np.isfinite(self._I_f).astype('bool')
@@ -220,19 +343,19 @@ class surface(object):
         Mask the surface based on simple cuts to the parameters.
 
         Args:
-            min_r (Optional[float]): Minimum radius in [arcsec].
-            max_r (Optional[float]): Maximum radius in [arcsec].
-            min_z (Optional[float]): Minimum emission height in [arcsec].
-            max_z (Optional[float]): Maximum emission height in [arcsec].
-            min_zr (Optional[float]): Minimum z/r ratio.
-            max_zr (Optional[float]): Maximum z/r ratio.
-            min_Inu (Optional[float]): Minumum intensity in [Jy/beam].
-            max_Inu (Optional[float]): Maximum intensity in [Jy/beam].
-            min_v (Optional[float]): Minimum velocity in [m/s].
-            max_v (Optional[float]): Maximum velocity in [m/s].
-            min_snr (Optional[float]): Minimum SNR ratio.
-            max_snr (Optional[float]): Maximum SNR ratio.
-            RMS (Optional[float]): Use this RMS value in place of the
+            min_r (optional[float]): Minimum radius in [arcsec].
+            max_r (optional[float]): Maximum radius in [arcsec].
+            min_z (optional[float]): Minimum emission height in [arcsec].
+            max_z (optional[float]): Maximum emission height in [arcsec].
+            min_zr (optional[float]): Minimum z/r ratio.
+            max_zr (optional[float]): Maximum z/r ratio.
+            min_Inu (optional[float]): Minumum intensity in [Jy/beam].
+            max_Inu (optional[float]): Maximum intensity in [Jy/beam].
+            min_v (optional[float]): Minimum velocity in [m/s].
+            max_v (optional[float]): Maximum velocity in [m/s].
+            min_snr (optional[float]): Minimum SNR ratio.
+            max_snr (optional[float]): Maximum SNR ratio.
+            RMS (optional[float]): Use this RMS value in place of the
                 ``self.rms`` value for calculating the SNR masks.
         """
 

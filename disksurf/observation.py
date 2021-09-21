@@ -264,7 +264,8 @@ class observation(imagecube):
         _surface = np.squeeze(_surface).T
         return _surface[:, np.isfinite(_surface[2])]
 
-    def integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0, r_max=None):
+    def get_integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0,
+                                r_max=None):
         """
         Calculate the integrated spectrum over a specified spatial region. The
         uncertainty is calculated assuming the spatially correlation is given
@@ -433,7 +434,7 @@ class observation(imagecube):
             If ``return_fig=True``, the Matplotlib figure used for plotting.
         """
         x = self.velax.copy() / 1e3
-        y, dy = self.integrated_spectrum(x0, y0, inc, PA, r_max)
+        y, dy = self.get_integrated_spectrum(x0, y0, inc, PA, r_max)
         import matplotlib.pyplot as plt
         fig, ax = plt.subplots()
         L = ax.step(x, y, where='mid')
