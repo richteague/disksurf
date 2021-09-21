@@ -20,7 +20,7 @@ Grab the latest version from PyPI:
 $ pip install disksurf
 ```
 
-This has a couple of dependencies, namely [astropy](https://github.com/astropy/astropy) and [GoFish](https://github.com/richteague/gofish), which should be installed automatically if you don't have them.
+This has a couple of dependencies, namely [astropy](https://github.com/astropy/astropy) and [GoFish](https://github.com/richteague/gofish), which should be installed automatically if you don't have them. To verify that everything was installed as it should, running through the [tutorials](https://disksurf.readthedocs.io/en/latest/tutorials/tutorial_1.html) should work without issue.
 
 ## How do I use it?
 
