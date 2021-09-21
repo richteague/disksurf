@@ -466,7 +466,17 @@ class surface(object):
         Apply a mask based on an iterative sigma clip.
 
         Args:
-
+            p (str): The parameter to apply the sigma clipping to.
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            reflect (optional[bool]): Whether to reflect the backside points
+                about the midplane. Defaults to ``False``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+            nsigma (optional[float]):
+            niter (optional[int]):
+            window (optional[float]):
+            min_sigma (optional[float]):
 
         """
         r = ', reflect={}'.format(str(reflect)) if p == 'z' else ''
@@ -640,9 +650,7 @@ class surface(object):
         Fit the extracted emission surface with a tapered power law of the form
 
         .. math::
-            z(r) = z_0 \, \left( \frac{r}{1^{\prime\prime}} \right)^{\psi}
-            \times \exp \left( -\left[ \frac{r}{r_{\rm taper}}
-            \right]^{\psi_{\rm taper}} \right)
+            z(r) = z_0 \, \left( \frac{r}{1^{\prime\prime}} \right)^{\psi} \times \exp \left( -\left[ \frac{r}{r_{\rm taper}} \right]^{\psi_{\rm taper}} \right)
 
         where a single power law profile is recovered when
         :math:`r_{\rm taper} \rightarrow \infty`, and can be forced using the
