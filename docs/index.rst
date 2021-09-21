@@ -23,9 +23,6 @@ Alternatively you can clone the repository and install that version.
     cd disksurf
     pip install .
 
-Usage
-*****
-
 To guide you through how to use ``disksurf`` we've created a few tutorials.
 
 .. toctree::
@@ -41,4 +38,4 @@ If you are having issues, please open a `issue <https://github.com/richteague/di
 
 .. toctree::
    :maxdepth: 2
-   :caption: API
+   :caption: api
