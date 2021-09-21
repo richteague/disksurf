@@ -1,2 +1,3 @@
 from .observation import observation
-__all__ = ["observation"]
+from .surface import surface
+__all__ = ["observation", "surface"]
