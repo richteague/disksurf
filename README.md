@@ -10,7 +10,7 @@
 
 ## What is it?
 
-A package which contains the functions to measure the height of optically thick emission, or photosphere, using the method presented in [Pinte et al. (2018)](https://ui.adsabs.harvard.edu/abs/2018A%26A...609A..47P/abstract).
+`disksurf` is a package which contains the functions to measure the height of optically thick emission, or photosphere, using the method presented in [Pinte et al. (2018)](https://ui.adsabs.harvard.edu/abs/2018A%26A...609A..47P/abstract).
 
 ## How do I install it?
 
@@ -24,4 +24,11 @@ This has a couple of dependencies, namely [astropy](https://github.com/astropy/a
 
 ## How do I use it?
 
-Follow our [tutorials](https://disksurf.readthedocs.io/en/latest/tutorials/tutorial_1.html) for a quick guide on how to use `disksurf` with your own data.
+Follow our [tutorials](https://disksurf.readthedocs.io/en/latest/tutorials/tutorial_1.html) for a quick guide on how to use `disksurf` with your own data. For the most simple case, one can run:
+
+```python
+from disksurf import observation                        # import the module
+cube = observations('path/to/cube.fits')                # load up the data
+surface = cube.get_emission_surface(inc=30.0, PA=45.0)  # extract the surface
+surface.plot_surface()                                  # plot the surface
+```
