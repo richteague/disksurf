@@ -1,8 +1,3 @@
-"""
-A wrapper class to allow a user to extract an emission surface from a datacube
-of molecular line emission. This uses the method presented in Pinte et al.
-(2018).
-"""
 from astropy.convolution import convolve, Gaussian1DKernel
 from scipy.interpolate import interp1d
 from .detect_peaks import detect_peaks
@@ -14,7 +9,8 @@ import numpy as np
 
 class observation(imagecube):
     """
-    Wrapper of a GoFish imagecube class.
+    Wrapper of a GoFish imagecube class containing the emission surface
+    extraction methods.
 
     Args:
         path (str): Relative path to the FITS cube.
@@ -272,7 +268,8 @@ class observation(imagecube):
         """
         Returns a quick and dirty radial profile of the peak flux density. This
         function does not consider any flared emission surfaces, offset and
-        only takes the maximum value along the spectral axis.
+        only takes the maximum value along the spectral axis. For a more
+        careful profile, use the ``radial_profile`` function.
 
         Args:
             inc (float): Disk inclination in [degrees].
@@ -342,7 +339,7 @@ class observation(imagecube):
 
     def integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0, r_max=None):
         """
-        Returns the integrated spectrum over a specified region.
+        Returns the integrated spectrum over a specified spatial region.
 
         Args:
             x0 (Optional[float]): Right Ascension offset in [arcsec].
@@ -352,7 +349,8 @@ class observation(imagecube):
             r_max (Optional[float]): Radius to integrate out to in [arcsec].
 
         Returns:
-            spectrum, uncertainty (array, array): Something about these.
+            spectrum, uncertainty (array, array): The integrated intensity and
+                associated uncertainty in [Jy].
         """
         rr = self.disk_coords(x0=x0, y0=y0, inc=inc, PA=PA)[0]
         r_max = rr.max() if r_max is None else r_max
@@ -387,203 +385,6 @@ class observation(imagecube):
         ax2.set_xlabel("Channel Index")
         for i in range(10, x.size, 10):
             ax2.axvline(i, ls='--', lw=1.0, zorder=-15, color='0.8')
-
-    def iterative_clip_emission_surface(self, r, z, Inu=None, v=None,
-                                        nsigma=1.0, niter=3, window=1.0,
-                                        min_sigma=0.0, return_mask=False):
-        """
-        Iteratively clip the emission surface. For a given window (given as a
-        function of beam major axis), a running mean, ``mu``, and standard
-        deviation, ``sig`` is calculated. All pixels that do not satisfy
-        ``abs(z - mu) < nsigma * sig`` are removed. This is performed a
-        ``niter`` number of times. To prevent this removing all values a
-        ``min_sigma`` value can be provided which sets a minimum value to the
-        width of the clipping.
-
-        Args:
-            r (array): An array of radius values in [arcsec].
-            z (array): An array of corresponding z values in [arcsec].
-            Inu (optional[array]): Array of flux densities in [Jy/beam].
-            v (optional[array]): Array of velocities in [m/s].
-            nsigma (optional[float]): The number of standard deviations away
-                from the running mean to consider a 'good fit'. A larger number
-                is more conservative.
-            niter (optional[int]): The number of iterations of clipping.
-            window (optional[float]): The width of the window as a fraction of
-                the beam major axis. This is only rough.
-            min_sigma (optional[float]): Minimum standard deviation to use in
-                the iterative clipping as a fraction of the beam major axis.
-            return_mask (optional[bool]): Return the mask rather than the
-                clipped arrays.
-
-        Returns:
-            r, z[, Inu, v] (array, array[, array, array])
-        """
-        to_return = observation._pack_arguments(r, z, Inu, v)
-        idxs = np.argsort(to_return[0])
-        to_return = [p[idxs] for p in to_return]
-        window = int((window * self.bmaj) / np.diff(to_return[0]).mean())
-        min_sigma = (min_sigma * self.bmaj)
-        mask = observation.sigma_clip(to_return[1], nsigma=nsigma,
-                                      niter=niter, window=window,
-                                      min_sigma=min_sigma)
-        return observation._return_arguments(to_return, mask, return_mask)
-
-    def clip_rolling_scatter_threshold(self, r, z, Inu=None, v=None,
-                                       inc=90.0, nbeams=0.25, window=None,
-                                       return_mask=False):
-        """
-        Clip the data based on the value of the rolling scatter. As the
-        vertical direction is related to the on-sky distance as,
-
-        .. math::
-            z = \frac{y}{sin(i)}
-
-        then for some uncertainty in :math:`y`, ``npix``, we can calculate the
-        associated scatter in :math:`z`.
-
-        .. warning::
-            For low inclinations this will translate to very large scatters.
-            The default ``inc`` value will result in the minimum scatter in
-            ``z``.
-
-        Args:
-            r (array): An array of radius values in [arcsec].
-            z (array): An array of corresponding z values in [arcsec].
-            Inu (optional[array]): Array of flux densities in [Jy/beam].
-            v (optional[array]): Array of velocities in [m/s].
-            inc (optional[float]): Inclination of disk in [degrees].
-            nbeams (optional[float]): Threshold of the scatter as a fraction of
-                the beam major axis.
-            window (optional[int]): Window size for the rolling standard
-                deviation. Defaults to quarter of the beam FWHM.
-            return_mask (optional[bool]): Return the mask rather than the
-                clipped arrays.
-
-        Returns:
-            r, z[, Inu, v] (array, array[, array, array])
-        """
-        to_return = observation._pack_arguments(r, z, Inu, v)
-        if window is None:
-            window = self.estimate_rolling_stats_window(to_return[0], 0.25)
-        _, z_std = observation.rolling_stats(to_return[1], window=window)
-        scatter_threshold = nbeams * self.bmaj / np.sin(np.radians(inc))
-        for idx, scatter in enumerate(z_std):
-            if scatter > scatter_threshold:
-                break
-        mask = to_return[0] < to_return[0][idx]
-        return observation._return_arguments(to_return, mask, return_mask)
-
-    def estimate_radial_range_counts(self, r, min_counts=8, window=8,
-                                     bin_in_radius_kwargs=None):
-        """
-        Given some binning parameters, the number of points in each bin are
-        counted. Starting from the bin with the most points in, the closest two
-        bins where the counts fall below some threshold are given at the inner
-        and outer bounds to clip the data.
-
-        Args:
-            r (array): Either array of the unbinned radial samples.
-            min_counts (optional[int]): Minimum number of counts for each bin.
-            window (optional[int]): Window size to use to calculate the rolling
-                average of the bin counts.
-            bin_in_radius_kwargs (optional[dict]): Kwargs to pass to
-                ``bin_in_radius`` if ``bin_data=True``.
-
-        Returns:
-            r_min, r_max (float, float): Inner and outer radius of
-        """
-
-        kw = {} if bin_in_radius_kwargs is None else bin_in_radius_kwargs
-        kw['statistic'] = 'count'
-        r_bins, N_bins, _ = self.bin_in_radius(r, r, **kw)
-        if window > 1:
-            N_bins, _ = observation.rolling_stats(N_bins, window)
-        idx = np.argmax(N_bins)
-
-        if N_bins[idx] < min_counts:
-            raise ValueError("No bin with {} counts.".format(min_counts))
-
-        min_val = N_bins.max()
-        for i in range(idx):
-            min_val = min(N_bins[idx - i], min_val)
-            if min_val < min_counts:
-                break
-        i += 1 if i == idx - 1 else 0
-        r_min = r_bins[idx - i]
-
-        min_val = N_bins.max()
-        for i in range(r_bins.size - idx):
-            min_val = min(N_bins[idx + i], min_val)
-            if min_val < min_counts:
-                break
-        r_max = r_bins[idx + i]
-
-        return r_min, r_max
-
-    def clip_bin_counts(self, r, z, Inu=None, v=None, min_counts=8, window=8,
-                        bin_in_radius_kwargs=None, return_mask=False):
-        """
-        Given some binning parameters, the number of points in each bin are
-        counted. Starting from the bin with the most points in, the closest two
-        bins where the counts fall below some threshold are given at the inner
-        and outer bounds to clip the data.
-
-        Args:
-            r (array): Either array of the unbinned radial samples.
-            min_counts (optional[int]): Minimum number of counts for each bin.
-            window (optional[int]): Window size to use to calculate the rolling
-                average of the bin counts.
-            bin_in_radius_kwargs (optional[dict]): Kwargs to pass to
-                ``bin_in_radius`` if ``bin_data=True``.
-            return_mask (optional[bool]): Return the mask rather than the
-                clipped arrays.
-
-        Returns:
-            r, z[, Inu, v] (array, array[, array, array])
-        """
-        to_return = observation._pack_arguments(r, z, Inu, v)
-        r_min, r_max = self.estimate_radial_range_counts(r, min_counts, window,
-                                                         bin_in_radius_kwargs)
-        mask = np.logical_and(r >= r_min, r <= r_max)
-        return observation._return_arguments(to_return, mask, return_mask)
-
-    def estimate_radial_range(self, inc=0.0, PA=0.0, nsigma=5.0, nchan=None):
-        """
-        Estimate the radial range to consider in the emission surface. This is
-        done by making a radial profile of the peak flux density, then only
-        considering the radial range where the peak value is greater than
-        ``nsigma * RMS`` where ``RMS`` is calculated based on the first and
-        last ``nchan`` channels.
-
-        Args:
-            inc (optional[float]): Disk inclination in [degrees].
-            PA (optional[float]): Disk position angle in [degrees].
-            nsigma (optional[float]): The RMS factor used to clip the profile.
-            nchan (optional[int]): The number of first and last channels to use
-                to estimate the standard deviation of the spectrum.
-
-        Returns:
-            r_min, r_max (float, float): The inner and outer radius where the
-                peak flux density is above the provided limit.
-        """
-        r, Inu, _ = self.quick_peak_profile(inc=inc, PA=PA)
-        nchan = int(self.velax.size / 3) if nchan is None else int(nchan)
-        if nchan > self.velax.size / 2 and self.verbose:
-            print("WARNING: `nchan` larger than half the spectral axis.")
-        Inu /= self.estimate_RMS(N=nchan)
-        Inu = np.where(Inu >= nsigma, 1, 0)
-        r_min = 0.0
-        for i, F in enumerate(Inu):
-            if F > 0:
-                r_min = r[i]
-                break
-        r_max = self.xaxis.max()
-        for i, F in enumerate(Inu[::-1]):
-            if F > 0:
-                r_max = r[r.size - 1 - i]
-                break
-        return 0.0 if r_min == r[0] else r_min, r_max
 
     @staticmethod
     def rotate_image(data, PA):
@@ -651,7 +452,23 @@ class observation(imagecube):
         Plot the temperature structure from the surface.
 
         Args:
-            TBD
+            surface (surface instance): The extracted emission surface.
+            side (optional[str]): The emission side to plot, must be either
+                ``'both'``, ``'front'`` or ``'back'``.
+            reflect (optional[bool]): Whether to reflect the back side of the
+                disk about the midplane. Default is ``False``.
+            masked (optional[bool]): Whether to plot the masked points, the
+                default, or all extracted points.
+            ax (optional[axes instance]): The Matplolib axis to use for
+                plotting. If none is provided, one will be generated. If an
+                axis is provided, the same color scaling will be used.
+            return_fig (optional[bool]): If no axis is provided, whether to
+                return the Matplotlib figure. The axis can then be accessed
+                through ``fig.axes[0]``.
+
+        Returns:
+            matplotlib figure: If ``return_fig=True``, the Matplotlib figure
+                instance used for the plotting.
         """
 
         # Generate plotting axes. If a previous axis has been provided, we
@@ -723,11 +540,24 @@ class observation(imagecube):
 
     def plot_channels(self, chans=None, velocities=None, return_fig=False):
         """
-        Plot the channels within the channel range or velocity range.
+        Plot the channels within the channel range or velocity range. Only one
+        of ``chans`` or ``velocities`` can be specified. If neither is
+        specified, all channels are plotted which may take some time for large
+        data cubes.
 
         Args:
-            chans
-            return_fig
+            chans (optional[tuple]): A tuple containing the index of the first
+                and last channel to plot. Cannot be specified if ``velocities``
+                is also specified.
+            velocities (optional[tuple]): A tuple containing the velocity of
+                the first and last channel to plot in [m/s]. Cannot be
+                specified if ``chans`` is also specified.
+            return_fig (optional[bool]): Whether to return the Matplotlib
+                figure.
+
+        Returns:
+            matplotlib figure: If ``return_fig=True``, the Matplotlib figure
+                instance used for the plotting.
         """
         from matplotlib.ticker import MaxNLocator
         import matplotlib.pyplot as plt
