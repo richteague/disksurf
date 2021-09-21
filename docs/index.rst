@@ -38,4 +38,6 @@ If you are having issues, please open a `issue <https://github.com/richteague/di
 
 .. toctree::
    :maxdepth: 2
-   :caption: api
+   :caption: API
+
+   api 
