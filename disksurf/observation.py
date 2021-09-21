@@ -629,7 +629,7 @@ class observation(imagecube):
 
     def plot_temperature(self, surface, side='both', reflect=False,
                          masked=True, ax=None, return_fig=False):
-        """
+        r"""
         Plot the temperature structure using the provided surface instance.
         Note that the brightness temperature only provides a good measure of
         the true gas temperature when the lines are optically thick such that

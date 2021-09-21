@@ -24,7 +24,7 @@ This has a couple of dependencies, namely [astropy](https://github.com/astropy/a
 
 ## How do I use it?
 
-Follow our [tutorials](https://disksurf.readthedocs.io/en/latest/tutorials/tutorial_1.html) for a quick guide on how to use `disksurf` with your own data. For the most simple case, one can run:
+At its most basic, `disksurf` is as easy as:
 
 ```python
 from disksurf import observation                        # import the module
@@ -32,3 +32,5 @@ cube = observations('path/to/cube.fits')                # load up the data
 surface = cube.get_emission_surface(inc=30.0, PA=45.0)  # extract the surface
 surface.plot_surface()                                  # plot the surface
 ```
+
+Follow our [tutorials](https://disksurf.readthedocs.io/en/latest/tutorials/tutorial_1.html) for a quick guide on how to use `disksurf` with DSHARP data and some of the additional functions that will help you extract the best surface possible.
