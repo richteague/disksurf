@@ -17,6 +17,8 @@ class observation(imagecube):
         FOV (optional[float]): Clip the image cube down to a specific
             field-of-view spanning a range ``FOV``, where ``FOV`` is in
             [arcsec].
+        velocity_range (optional[tuple]): A tuple of the minimum and maximum
+            velocity in [m/s] to cut the cube down to.
     """
 
     def __init__(self, path, FOV=None, velocity_range=None):
@@ -124,11 +126,11 @@ class observation(imagecube):
                 print("Centering data cube...")
             x0_pix = x0 / self.dpix
             y0_pix = y0 / self.dpix
-            data = observation.shift_center(data, x0_pix, y0_pix)
+            data = observation._shift_center(data, x0_pix, y0_pix)
         if PA != 90.0 and PA != 270.0:
             if self.verbose:
                 print("Rotating data cube...")
-            data = observation.rotate_image(data, PA)
+            data = observation._rotate_image(data, PA)
         return data
 
     def _detect_peaks(self, data, inc, r_min, r_max, chans, min_SNR=5.0,
@@ -264,79 +266,6 @@ class observation(imagecube):
         _surface = np.squeeze(_surface).T
         return _surface[:, np.isfinite(_surface[2])]
 
-    def quick_peak_profile(self, inc, PA, data=None):
-        """
-        Returns a quick and dirty radial profile of the peak flux density. This
-        function does not consider any flared emission surfaces, offset and
-        only takes the maximum value along the spectral axis. For a more
-        careful profile, use the ``radial_profile`` function.
-
-        Args:
-            inc (float): Disk inclination in [degrees].
-            PA (float): Disk position angle in [degrees].
-            data (optional[array]): Data to make a profile of. If no data is
-                provided, take the maximum of ``self.data`` along the spectral
-                axis.
-
-        Returns:
-            r, Inu, dInu (array, array, array): Arrays of the peak flux
-                density, ``Inu`` at radial positions ``r``. ``dInu`` is given
-                by the standard error on the mean.
-        """
-        data = np.nanmax(self.data.copy(), axis=0) if data is None else data
-        if data.ndim != 2:
-            raise ValueError("`data` must be a 2D array.")
-        data = data.flatten()
-        rbins, rpnts = self.radial_sampling()
-        rvals = self.disk_coords(x0=0.0, y0=0.0, inc=inc, PA=PA)[0]
-        ridxs = np.digitize(rvals.flatten(), rbins)
-        Inu, dInu = [], []
-        for r in range(1, rbins.size):
-            _tmp = data[ridxs == r]
-            _tmp = _tmp[np.isfinite(_tmp)]
-            Inu += [np.mean(_tmp)]
-            dInu += [np.std(_tmp) / len(_tmp)**0.5]
-        return rpnts, np.array(Inu), np.array(dInu)
-
-    def radial_threshold(self, rotated_data, inc, nsigma=1.0, smooth=1.0,
-                         think_positively=True, mask_value=0.0):
-        """
-        Calculates a radial profile of the peak flux density including the mean
-        and the azimuthal scatter. The latter defines a threshold for clipping.
-
-        Args:
-            rotated_data (array): The data to mask, rotated such that the
-                red-shifted axis of the disk aligns with the x-axis (i.e. that
-                ``PA == 90`` or ``PA == 270``).
-            inc (float): Inclination of the disk in [deg].
-            nsigma (optional[float]): Mask all pixels with a flux density less
-                than ``mu - nsigma * sig``, where ``mu`` and ``sig`` are
-                the radially varying mean and standard deviation of the peak
-                flux density.
-            smooth (optional[float]): Smooth the radial profiles prior to the
-                interpolation with a Gaussian kernal with a FWHM of
-                ``smooth * BMAJ``.
-            think_positively (optional[bool]): Only consider positive values.
-            mask_value (optional[int]): Value to use for masked pixels.
-
-        Returns:
-            masked_data (ndarray): A masked verion of ``rotated_data`` where
-                all masked values are ``mask_value``.
-
-        """
-        if nsigma is None:
-            return rotated_data
-        rvals = self.disk_coords(x0=0.0, y0=0.0, inc=inc, PA=90.0)[0]
-        out = self.quick_peak_profile(inc, 90.0, np.max(rotated_data, axis=0))
-        rpnts, avgTb, stdTb = out
-        if smooth > 0.0:
-            kernel = Gaussian1DKernel((smooth * self.bmaj) / self.dpix / 2.235)
-            avgTb = convolve(avgTb, kernel, boundary='wrap')
-            stdTb = convolve(stdTb, kernel, boundary='wrap')
-        Inu_clip = interp1d(rpnts, avgTb - nsigma * stdTb,
-                            bounds_error=False, fill_value=0.0)(rvals)
-        return np.where(rotated_data >= Inu_clip, rotated_data, mask_value)
-
     def integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0, r_max=None):
         """
         Returns the integrated spectrum over a specified spatial region.
@@ -360,9 +289,10 @@ class observation(imagecube):
         uncertainty = np.sqrt(nbeams) * self.estimate_RMS()
         return spectrum, uncertainty
 
-    def plot_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0, r_max=None):
+    def plot_integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0,
+                                 r_max=None):
         """
-        Plot the integrated spectrum.
+        Plot the integrated spectrum integrated over a spatial region.
 
         Args:
             x0 (Optional[float]): Right Ascension offset in [arcsec].
@@ -387,7 +317,7 @@ class observation(imagecube):
             ax2.axvline(i, ls='--', lw=1.0, zorder=-15, color='0.8')
 
     @staticmethod
-    def rotate_image(data, PA):
+    def _rotate_image(data, PA):
         """
         Rotate the image such that the red-shifted axis aligns with the x-axis.
 
@@ -410,7 +340,7 @@ class observation(imagecube):
         return rotated
 
     @staticmethod
-    def shift_center(data, x0, y0):
+    def _shift_center(data, x0, y0):
         """
         Shift the source center by ``x0`` [pix] and ``y0`` [pix] in the `x` and
         `y` directions, respectively.
@@ -433,15 +363,15 @@ class observation(imagecube):
         return shifted
 
     @staticmethod
-    def powerlaw(r, z0, q, r_cavity=0.0):
+    def _powerlaw(r, z0, q, r_cavity=0.0):
         """Standard power law profile."""
         return z0 * np.clip(r - r_cavity, a_min=0.0, a_max=None)**q
 
     @staticmethod
-    def tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0):
+    def _tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0):
         """Exponentially tapered power law profile."""
         rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
-        f = observation.powerlaw(rr, z0, q)
+        f = observation._powerlaw(rr, z0, q)
         return f * np.exp(-(rr / r_taper)**q_taper)
 
     # -- PLOTTING FUNCTIONS -- #
