@@ -1,4 +1,5 @@
 API
 ===
 
-Does this show up?
+.. autoclass:: disksurf.observation
+    :inherited-members:
