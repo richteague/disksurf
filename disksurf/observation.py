@@ -266,17 +266,20 @@ class observation(imagecube):
 
     def integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0, r_max=None):
         """
-        Returns the integrated spectrum over a specified spatial region.
+        Calculate the integrated spectrum over a specified spatial region. The
+        uncertainty is calculated assuming the spatially correlation is given
+        by elliptical beams.
 
         Args:
-            x0 (Optional[float]): Right Ascension offset in [arcsec].
-            y0 (Optional[float]): Declination offset in [arcsec].
-            inc (Optional[float]): Disk inclination in [deg].
-            PA (Optional[float]): Disk position angle in [deg].
-            r_max (Optional[float]): Radius to integrate out to in [arcsec].
+            x0 (optional[float]): Right Ascension offset in [arcsec].
+            y0 (optional[float]): Declination offset in [arcsec].
+            inc (optional[float]): Disk inclination in [deg].
+            PA (optional[float]): Disk position angle in [deg].
+            r_max (optional[float]): Radius to integrate out to in [arcsec].
 
         Returns:
-            The integrated intensity and associated uncertainty in [Jy].
+            The integrated intensity, ``spectrum``, and associated uncertainty,
+            ``uncertainty``, in [Jy].
         """
         rr = self.disk_coords(x0=x0, y0=y0, inc=inc, PA=PA)[0]
         r_max = rr.max() if r_max is None else r_max
