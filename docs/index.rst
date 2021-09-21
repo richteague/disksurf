@@ -23,16 +23,19 @@ Alternatively you can clone the repository and install that version.
     cd disksurf
     pip install .
 
-To guide you through how to use ``disksurf`` we've created a few tutorials.
-
-.. toctree::
-   :maxdepth: 2
-   :caption: Contents
-
-   api
-   tutorials/tutorial_1
+To guide you through how to use ``disksurf`` we've created a tutorial using
+data from the `DSHARP <https://almascience.eso.org/almadata/lp/DSHARP/>`_ Large
+Program. This tutorial also serves as a test that the software has been
+installed correctly.
 
 Support
 *******
 
 If you are having issues, please open a `issue <https://github.com/richteague/disksurf/issues>`_ on the GitHub page.
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents
+
+   user/api
+   tutorials/tutorial_1
