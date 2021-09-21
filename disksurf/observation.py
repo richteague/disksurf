@@ -1,5 +1,3 @@
-from astropy.convolution import convolve, Gaussian1DKernel
-from scipy.interpolate import interp1d
 from .detect_peaks import detect_peaks
 import matplotlib.pyplot as plt
 from .surface import surface
@@ -55,8 +53,8 @@ class observation(imagecube):
                 ``detect_peaks``.
 
         Returns:
-            r, z, Inu, v (arrays): Arrays of radius, height, flux density and
-                velocity.
+            surface instance: A ``disksurf.surface`` instance containing the
+                extracted emission surface.
         """
 
         # Remove bad inclination:
