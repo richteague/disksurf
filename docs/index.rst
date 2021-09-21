@@ -41,5 +41,5 @@ If you are having issues, please open a `issue <https://github.com/richteague/di
    :maxdepth: 2
    :caption: Contents
 
-   user/api
    tutorials/tutorial_1
+   user/api

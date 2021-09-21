@@ -35,14 +35,15 @@ extensions = [
 ]
 
 # Is this really necessary...
-autodoc_mock_imports = ['astropy',
-                        'scipy',
-                        'argparse',
-                        'numpy',
-                        'tqdm',
-                        'matplotlib',
-                        'gofish',
-                        ]
+autodoc_mock_imports = [
+    'astropy',
+    'scipy',
+    'argparse',
+    'numpy',
+    'tqdm',
+    'matplotlib',
+    'gofish',
+]
 
 # Make sure all docstrings are in source order.
 autodoc_member_order = "bysource"

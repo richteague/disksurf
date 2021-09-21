@@ -460,38 +460,41 @@ class surface(object):
                 self._mask_b *= mask
         self.rms = _saved_rms
 
-    def sigma_clip(self, p, side='front', reflect=True, masked=True,
-                   nsigma=1.0, niter=3, window=0.1, min_sigma=0.0):
+    def _sigma_clip(self, p, side='front', reflect=True, masked=True,
+                    nsigma=1.0, niter=3, window=0.1, min_sigma=0.0):
         """
-        Apply a mask based on an iterative sigma clip.
+        Apply a mask based on an iterative sigma clip for a given parameter.
 
         Args:
-            p (str): The parameter to apply the sigma clipping to.
+            p (str): The parameter to apply the sigma clipping to, for example
+                ``'z'`` to clip based on the emission height.
             side (optional[str]): Side of the disk. Must be ``'front'``,
                 ``'back'`` or ``'both'``. Defaults to ``'both'``.
             reflect (optional[bool]): Whether to reflect the backside points
                 about the midplane. Defaults to ``False``.
             masked (optional[bool]): Whether to return only the masked points,
                 the default, or all points.
-            nsigma (optional[float]):
-            niter (optional[int]):
-            window (optional[float]):
-            min_sigma (optional[float]):
-
+            nsigma (optional[float]): The threshold for clipping in number of
+                standard deviations.
+            niter (optional[int]): The number of iterations to perform.
+            window (optional[float]): The size of the window to use to
+                calculate the standard deviation as a fraction of the beam
+                FWHM.
+            min_sigma (optional[float]): The minimum standard deviation
+                possible as to avoid clipping all points.
         """
+        raise NotImplementedError
         r = ', reflect={}'.format(str(reflect)) if p == 'z' else ''
-        x = eval("self.{}(side='{}', masked={}{})".format(p, side, masked, r))
-        xtmp, xnum = x.copy(), np.arange(x.size)
+        x = "self.{}(side='{}', masked={}{})".format(p, side, masked, r)
         for n in range(niter):
             x0 = self.rolling_statistic(p, func=np.nanmean, window=window,
                                         side=side, masked=masked)
             dx = self.rolling_statistic(p, func=np.nanstd, window=window,
                                         side=side, masked=masked)
-            # UP TO HERE #
             dx = np.clip(dx, a_min=min_sigma, a_max=None)
-            mask = abs(xtmp - x0) < nsigma * dx
-            xtmp, xnum = xtmp[mask], xnum[mask]
-        return np.squeeze([xx in xnum for xx in np.arange(x.size)])
+            mask = abs(eval(x) - x0) < nsigma * dx
+            if side in ['front', 'both']:
+                self._mask_f *= mask
 
     @staticmethod
     def convolve(x, N=7):
@@ -510,9 +513,9 @@ class surface(object):
         to the ``bin_parameter`` function.
 
         Args:
-            rvals (Optional[array]): Desired bin centers.
-            rbins (Optional[array]): Desired bin edges.
-            side (Optional[str]): Which 'side' of the disk to bin, must be one
+            rvals (optional[array]): Desired bin centers.
+            rbins (optional[array]): Desired bin edges.
+            side (optional[str]): Which 'side' of the disk to bin, must be one
                 of ``'both'``', ``'front'`` or ``'back'``.
             reflect (Optional[bool]): Whether to reflect the emission height of
                 the back side of the disk about the midplane.
@@ -520,8 +523,8 @@ class surface(object):
                 Default is ``True``.
 
         Returns:
-            r, z, dz (array, array, array): Bin centers, and average emission
-                surface with uncertainty given as the bin standard deviations.
+            The bin centers, ``r`, and the average emission surface, ``z``,
+            with then uncertainty, ``dz``, given as the bin standard deviation.
         """
         return self.bin_parameter('z', rvals=rvals, rbins=rbins, side=side,
                                   reflect=reflect, masked=masked)
@@ -536,18 +539,18 @@ class surface(object):
         Args:
             p (str): Parameter to bin. For example, to bin the emission height,
                 ``p='z'``.
-            rvals (Optional[array]): Desired bin centers.
-            rbins (Optional[array]): Desired bin edges.
-            side (Optional[str]): Which 'side' of the disk to bin, must be one
+            rvals (optional[array]): Desired bin centers.
+            rbins (optional[array]): Desired bin edges.
+            side (optional[str]): Which 'side' of the disk to bin, must be one
                 of ``'both'``', ``'front'`` or ``'back'``.
-            reflect (Optional[bool]): Whether to reflect the emission height of
+            reflect (optional[bool]): Whether to reflect the emission height of
                 the back side of the disk about the midplane.
-            masked (Optional[bool]): Whether to use the masked data points.
+            masked (optional[bool]): Whether to use the masked data points.
                 Default is ``True``.
 
         Returns:
-            r, mu, std (array, array, array): The bin centers, and the binned
-                mean and standard deviations of the desired parameter.
+            The bin centers, ``r``, and the binned mean, ``mu``, and standard
+            deviation, ``std``, of the desired parameter.
         """
         r = ', reflect={}'.format(str(reflect)) if p == 'z' else ''
         x = eval("self.{}(side='{}', masked={}{})".format(p, side, masked, r))
@@ -578,19 +581,22 @@ class surface(object):
     def rolling_surface(self, window=0.1, side='front', reflect=True,
                         masked=True):
         """
-        Return the rolling average of the emission surface.
+        Return the rolling average of the emission surface. As the radial
+        sampling is unevenly spaced the kernel size, which is a fixed number of
+        samples, can vary in the radial range it represents. The uncertainty is
+        taken as the rolling standard deviation.
 
         Args:
-            window (Optional[float]): Window size in [arcsec].
-            side (Optional[str]): Which 'side' of the disk to bin, must be one
+            window (optional[float]): Window size in [arcsec].
+            side (optional[str]): Which 'side' of the disk to bin, must be one
                 of ``'both'``', ``'front'`` or ``'back'``.
-            reflect (Optional[bool]): Whether to reflect the emission height of
+            reflect (optional[bool]): Whether to reflect the emission height of
                 the back side of the disk about the midplane.
-            masked (Optional[bool]): Whether to use the masked data points.
+            masked (optional[bool]): Whether to use the masked data points.
                 Default is ``True``.
 
         Returns:
-            r, z, dz (array, array, array): COMING SOON.
+            The radius, ``r``, emission height, ``z``, and uncertainty, ``dz``.
         """
         r = self.r(side=side, masked=masked)
         z = self.rolling_statistic(p='z', func=np.nanmean, window=window,
@@ -602,10 +608,9 @@ class surface(object):
     def rolling_statistic(self, p, func=np.nanmean, window=0.1, side='front',
                           reflect=True, masked=True):
         """
-        Return the rolling statistic of the provided parameter. As the radial
-        sampling of points is non-uniform, the desired window size, which
-        defaults to 0.1 arcsec, is only a guide and the true window size will
-        vary.
+        Return the rolling statistic of the provided parameter.  As the radial
+        sampling is unevenly spaced the kernel size, which is a fixed number of
+        samples, can vary in the radial range it represents.
 
         Args:
             p (str): Parameter to appl the rolling statistic to. For example,
@@ -620,7 +625,7 @@ class surface(object):
                 Default is ``True``.
 
         Returns:
-            s (array): The rolling statistic.
+            The rolling statistic, ``s``.
         """
         r = ', reflect={}'.format(str(reflect)) if p == 'z' else ''
         x = self.r(side=side, masked=masked)
@@ -669,27 +674,27 @@ class surface(object):
         each point as a weighting in the fit.
 
         Args:
-            tapered_powerlaw (Optional[bool]): If ``True``, fit the tapered
+            tapered_powerlaw (optional[bool]): If ``True``, fit the tapered
                 power law profile rather than a single power law function.
-            include_cavity (Optional[bool]): If ``True``, include a cavity in
+            include_cavity (optional[bool]): If ``True``, include a cavity in
                 the functional form, inside of which all heights are set to 0.
-            r0 (Optional[float]): The reference radius for :math:`z_0`.
+            r0 (optional[float]): The reference radius for :math:`z_0`.
                 Defaults to 1 arcsec, unless ``dist`` is provided, then
                 defaults to 100 au.
-            dist (Optional[float]): Convert all distances from [arcsec] to [au]
+            dist (optional[float]): Convert all distances from [arcsec] to [au]
                 for the fitting. If this is provided, ``r_ref`` will change to
                 100 au unless specified by the user.
-            side (Optional[str]): Which 'side' of the disk to bin, must be one
+            side (optional[str]): Which 'side' of the disk to bin, must be one
                 of ``'both'``', ``'front'`` or ``'back'``.
-            masked (Optional[bool]): Whether to use the masked data points.
+            masked (optional[bool]): Whether to use the masked data points.
                 Default is ``True``.
-            curve_fit_kwargs (Optional[dict]): Keyword arguments to pass to
+            curve_fit_kwargs (optional[dict]): Keyword arguments to pass to
                 ``scipy.optimize.curve_fit``.
 
         Returns:
-            popt, copy (array, array): Best-fit values and associated
-                uncertainties for the fits if ``return_fit=False``, else the
-                best-fit model evaluated at the radial points.
+            Best-fit values, ``popt``, and associated uncertainties, ``copt``,
+            for the fits if ``return_fit=False``, else the best-fit model
+            evaluated at the radial points.
         """
         from scipy.optimize import curve_fit
 
@@ -716,11 +721,11 @@ class surface(object):
         kw['p0'] = [0.3 * dist, 1.0]
         if tapered_powerlaw:
             def func(r, *args):
-                return surface.tapered_powerlaw(r, *args, r0=r0)
+                return surface._tapered_powerlaw(r, *args, r0=r0)
             kw['p0'] += [1.0 * dist, 1.0]
         else:
             def func(r, *args):
-                return surface.powerlaw(r, *args, r0=r0)
+                return surface._powerlaw(r, *args, r0=r0)
         if include_cavity:
             kw['p0'] += [0.05 * dist]
 
@@ -892,7 +897,7 @@ class surface(object):
                 to_return += [np.median(samples, axis=0)]
             if tr == 'model':
                 median = np.median(samples, axis=0)
-                to_return += [r, surface.parse_model(r, median, labels, r0)]
+                to_return += [r, surface._parse_model(r, median, labels, r0)]
         return to_return if len(to_return) > 1 else to_return[0]
 
     def _ln_probability(self, theta, r, z, dz, labels, priors, r0):
@@ -902,12 +907,12 @@ class surface(object):
             lnp += surface._ln_prior(priors[label], t)
         if not np.isfinite(lnp):
             return lnp
-        model = surface.parse_model(r, theta, labels, r0)
+        model = surface._parse_model(r, theta, labels, r0)
         lnx2 = -0.5 * np.sum(np.power((z - model) / dz, 2)) + lnp
         return lnx2 if np.isfinite(lnx2) else -np.inf
 
     @staticmethod
-    def parse_model(r, theta, labels, r0):
+    def _parse_model(r, theta, labels, r0):
         """Parse the model parameters."""
         z0, q = theta[0], theta[1]
         try:
@@ -920,22 +925,22 @@ class surface(object):
             r_cavity = theta[labels.index('r_cavity')]
         except ValueError:
             r_cavity = 0.0
-        return surface.tapered_powerlaw(r=r, z0=z0, q=q, r_taper=r_taper,
-                                        q_taper=q_taper, r_cavity=r_cavity,
-                                        r0=r0)
+        return surface.__tapered_powerlaw(r=r, z0=z0, q=q, r_taper=r_taper,
+                                          q_taper=q_taper, r_cavity=r_cavity,
+                                          r0=r0)
 
     @staticmethod
-    def powerlaw(r, z0, q, r_cavity=0.0, r0=1.0):
+    def _powerlaw(r, z0, q, r_cavity=0.0, r0=1.0):
         """Standard power law profile."""
         rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
         return z0 * (rr / r0)**q
 
     @staticmethod
-    def tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0,
-                         r0=1.0):
+    def _tapered_powerlaw(r, z0, q, r_taper=np.inf, q_taper=1.0, r_cavity=0.0,
+                          r0=1.0):
         """Exponentially tapered power law profile."""
         rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
-        f = surface.powerlaw(rr, z0, q, r_cavity=0.0, r0=r0)
+        f = surface._powerlaw(rr, z0, q, r_cavity=0.0, r0=r0)
         return f * np.exp(-(rr / r_taper)**q_taper)
 
     @staticmethod
@@ -989,8 +994,7 @@ class surface(object):
                 figure if ``ax=None``.
 
         Returns:
-            fig (Matplotlib figure): Figure to continue plotting. Only if
-                ``return_fig=True``.
+            If ``return_fig=True``, the Matplotlib figure used for plotting.
         """
 
         # Generate plotting axes.
@@ -1051,6 +1055,7 @@ class surface(object):
 
     @staticmethod
     def _plot_walkers(walkers, labels, nburnin):
+        """Plot the walker traces."""
         import matplotlib.pyplot as plt
         for param, label in zip(walkers, labels):
             fig, ax = plt.subplots()
