@@ -35,7 +35,13 @@ extensions = [
 ]
 
 # Is this really necessary...
-autodoc_mock_imports = ['astropy', 'scipy', 'argparse', 'numpy', 'tqdm']
+autodoc_mock_imports = ['astropy',
+                        'scipy',
+                        'argparse',
+                        'numpy',
+                        'tqdm',
+                        'matplotlib',
+                        ]
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
