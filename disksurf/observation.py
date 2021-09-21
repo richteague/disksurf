@@ -289,33 +289,6 @@ class observation(imagecube):
         uncertainty = np.sqrt(nbeams) * self.estimate_RMS()
         return spectrum, uncertainty
 
-    def plot_integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0,
-                                 r_max=None):
-        """
-        Plot the integrated spectrum integrated over a spatial region.
-
-        Args:
-            x0 (Optional[float]): Right Ascension offset in [arcsec].
-            y0 (Optional[float]): Declination offset in [arcsec].
-            inc (Optional[float]): Disk inclination in [deg].
-            PA (Optional[float]): Disk position angle in [deg].
-            r_max (Optional[float]): Radius to integrate out to in [arcsec].
-        """
-        x = self.velax.copy() / 1e3
-        y, dy = self.integrated_spectrum(x0, y0, inc, PA, r_max)
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
-        L = ax.step(x, y, where='mid')
-        ax.errorbar(x, y, dy, fmt=' ', color=L[0].get_color(), zorder=-10)
-        ax.set_xlabel("Velocity (km/s)")
-        ax.set_ylabel("Integrated Flux (Jy)")
-        ax.set_xlim(x[0], x[-1])
-        ax2 = ax.twiny()
-        ax2.set_xlim(0, x.size-1)
-        ax2.set_xlabel("Channel Index")
-        for i in range(10, x.size, 10):
-            ax2.axvline(i, ls='--', lw=1.0, zorder=-15, color='0.8')
-
     @staticmethod
     def _rotate_image(data, PA):
         """
@@ -376,98 +349,6 @@ class observation(imagecube):
 
     # -- PLOTTING FUNCTIONS -- #
 
-    def plot_temperature(self, surface, side='both', reflect=False,
-                         masked=True, ax=None, return_fig=False):
-        """
-        Plot the temperature structure from the surface.
-
-        Args:
-            surface (surface instance): The extracted emission surface.
-            side (optional[str]): The emission side to plot, must be either
-                ``'both'``, ``'front'`` or ``'back'``.
-            reflect (optional[bool]): Whether to reflect the back side of the
-                disk about the midplane. Default is ``False``.
-            masked (optional[bool]): Whether to plot the masked points, the
-                default, or all extracted points.
-            ax (optional[axes instance]): The Matplolib axis to use for
-                plotting. If none is provided, one will be generated. If an
-                axis is provided, the same color scaling will be used.
-            return_fig (optional[bool]): If no axis is provided, whether to
-                return the Matplotlib figure. The axis can then be accessed
-                through ``fig.axes[0]``.
-
-        Returns:
-            matplotlib figure: If ``return_fig=True``, the Matplotlib figure
-                instance used for the plotting.
-        """
-
-        # Generate plotting axes. If a previous axis has been provided, we
-        # use the limits used for the most recent call of `plt.scatter` to set
-        # the same `vmin` and `vmax` values for ease of comparison. We also
-        # test to see if there's a second axis in the figure
-
-        if ax is None:
-            fig, ax = plt.subplots()
-            min_T, max_T = None, None
-            colorbar = True
-        else:
-            return_fig = False
-            min_T, max_T = 1e10, -1e10
-            for child in ax.get_children():
-                try:
-                    _min_T, _max_T = child.get_clim()
-                    min_T = min(_min_T, min_T)
-                    max_T = max(_max_T, max_T)
-                except (AttributeError, TypeError):
-                    continue
-            colorbar = False
-
-        # Plot each side separately to have different colors.
-
-        r, z, Tb = np.empty(1), np.empty(1), np.empty(1)
-        if side.lower() not in ['front', 'back', 'both']:
-            raise ValueError(f"Unknown `side` value {side}.")
-        if side.lower() in ['front', 'both']:
-            r = np.concatenate([r, surface.r(side='front', masked=masked)])
-            z = np.concatenate([z, surface.z(side='front', masked=masked)])
-            _Tb = self.jybeam_to_Tb(surface.I(side='front', masked=masked))
-            Tb = np.concatenate([Tb, _Tb])
-        if side.lower() in ['back', 'both']:
-            r = np.concatenate([r, surface.r(side='back', masked=masked)])
-            _z = surface.z(side='back', reflect=reflect, masked=masked)
-            z = np.concatenate([z, _z])
-            _Tb = self.jybeam_to_Tb(surface.I(side='back', masked=masked))
-            Tb = np.concatenate([Tb, _Tb])
-        r, z, Tb = r[1:], z[1:], Tb[1:]
-        min_T = np.nanmin(Tb) if min_T is None else min_T
-        max_T = np.nanmax(Tb) if max_T is None else max_T
-
-        # Three plots to include an outline without affecting the perceived
-        # alpha of the points.
-
-        ax.scatter(r, z, color='k', marker='o', lw=2.0)
-        ax.scatter(r, z, color='w', marker='o', lw=1.0)
-        ax.scatter(r, z, c=Tb, marker='o', lw=0.0, vmin=min_T,
-                   vmax=max_T, alpha=0.2, cmap='RdYlBu_r')
-
-        # Gentrification.
-
-        ax.set_xlabel("Radius (arcsec)")
-        ax.set_ylabel("Height (arcsec)")
-        if colorbar:
-            fig.set_size_inches(fig.get_figwidth() * 1.2,
-                                fig.get_figheight(),
-                                forward=True)
-            im = ax.scatter(r, z * np.nan, c=Tb, marker='.', vmin=min_T,
-                            vmax=max_T, cmap='RdYlBu_r')
-            cb = plt.colorbar(im, ax=ax, pad=0.02)
-            cb.set_label("T (K)", rotation=270, labelpad=13)
-
-        # Returns.
-
-        if return_fig:
-            return fig
-
     def plot_channels(self, chans=None, velocities=None, return_fig=False):
         """
         Plot the channels within the channel range or velocity range. Only one
@@ -486,8 +367,7 @@ class observation(imagecube):
                 figure.
 
         Returns:
-            matplotlib figure: If ``return_fig=True``, the Matplotlib figure
-                instance used for the plotting.
+            If ``return_fig=True``, the Matplotlib figure used for plotting.
         """
         from matplotlib.ticker import MaxNLocator
         import matplotlib.pyplot as plt
@@ -537,19 +417,62 @@ class observation(imagecube):
         if return_fig:
             return fig
 
+    def plot_integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0,
+                                 r_max=None, return_fig=False):
+        """
+        Plot the integrated spectrum integrated over a spatial region.
+
+        Args:
+            x0 (optional[float]): Right Ascension offset in [arcsec].
+            y0 (optional[float]): Declination offset in [arcsec].
+            inc (optional[float]): Disk inclination in [deg].
+            PA (optional[float]): Disk position angle in [deg].
+            r_max (optional[float]): Radius to integrate out to in [arcsec].
+
+        Returns:
+            If ``return_fig=True``, the Matplotlib figure used for plotting.
+        """
+        x = self.velax.copy() / 1e3
+        y, dy = self.integrated_spectrum(x0, y0, inc, PA, r_max)
+        import matplotlib.pyplot as plt
+        fig, ax = plt.subplots()
+        L = ax.step(x, y, where='mid')
+        ax.errorbar(x, y, dy, fmt=' ', color=L[0].get_color(), zorder=-10)
+        ax.set_xlabel("Velocity (km/s)")
+        ax.set_ylabel("Integrated Flux (Jy)")
+        ax.set_xlim(x[0], x[-1])
+        ax2 = ax.twiny()
+        ax2.set_xlim(0, x.size-1)
+        ax2.set_xlabel("Channel Index")
+        for i in range(10, x.size, 10):
+            ax2.axvline(i, ls='--', lw=1.0, zorder=-15, color='0.8')
+        if return_fig:
+            return fig
+
     def plot_isovelocities(self, surface, mstar, vlsr, dist, side='both',
                            reflect=True, smooth=None, return_fig=False):
         """
-        Plot the isovelocity contours for the given emission surface.
+        Plot the isovelocity contours for the given emission surface. This will
+        use the channels used for the extraction of the emission surface.
 
         Args:
-            surface
-            mstar
-            vlsr
-            dist
-            side
-            reflect
-            return_fig
+            surface (surface instance): The extracted emission surface.
+            mstar (float): The stellar mass in [Msun].
+            vlsr (float): The systemic velocity in [m/s].
+            dist (float): The source distance in [pc].
+            side (optional[str]): The emission side to plot, must be either
+                ``'both'``, ``'front'`` or ``'back'``.
+            reflect (optional[bool]): Whether to reflect the back side of the
+                disk about the midplane. Default is ``False``.
+            smooth (optional[int]): If provided, smooth the emission surface
+                with a Hanning kernel with a width of ``smooth``. Typically
+                values of 3 or 5 are sufficient for plotting purposes.
+            return_fig (optional[bool]): If no axis is provided, whether to
+                return the Matplotlib figure. The axis can then be accessed
+                through ``fig.axes[0]``.
+
+        Returns:
+            If ``return_fig=True``, the Matplotlib figure used for plotting.
         """
         from matplotlib.ticker import MaxNLocator
         from scipy.interpolate import interp1d
@@ -626,7 +549,9 @@ class observation(imagecube):
 
     def plot_peaks(self, surface, side='both', return_fig=False):
         """
-        Plot the peak locations on channel maps.
+        Plot the peak locations used to calculate the emission surface on
+        channel maps. This will use the channels used for the extraction of the
+        emission surface.
 
         Args:
             surface (surface instance): The extracted surface returned from
@@ -635,6 +560,9 @@ class observation(imagecube):
                 or ``'both'``. Defaults to ``'both'``.
             return_fig (Optional[bool]): Whether to return the Matplotlib
                 figure. Defaults to ``True``.
+
+        Returns:
+            If ``return_fig=True``, the Matplotlib figure used for plotting.
         """
         import matplotlib.pyplot as plt
         from matplotlib.ticker import MaxNLocator
@@ -654,6 +582,8 @@ class observation(imagecube):
             ax.imshow(channel, origin='lower', extent=self.extent,
                       cmap='binary_r', vmin=0.0, vmax=0.75*data.max())
 
+            # Plot the back side.
+
             if side.lower() in ['back', 'both']:
                 toplot = surface.v(side='back') == vv
                 ax.scatter(surface.x(side='back')[toplot],
@@ -662,6 +592,8 @@ class observation(imagecube):
                 ax.scatter(surface.x(side='back')[toplot],
                            surface.y(side='back', edge='near')[toplot],
                            lw=0.0, color='r', marker='.')
+
+            # Plot the front side.
 
             if side.lower() in ['front', 'both']:
                 toplot = surface.v(side='front') == vv
@@ -683,9 +615,107 @@ class observation(imagecube):
                 ax.set_xlabel('Offset (arcsec)')
                 ax.set_ylabel('Offset (arcsec)')
 
+        # Remove unused axes.
+
         if axs.size != velocities.size:
             for ax in axs.flatten()[-(axs.size - velocities.size):]:
                 ax.axis('off')
+
+        # Returns.
+
+        if return_fig:
+            return fig
+
+    def plot_temperature(self, surface, side='both', reflect=False,
+                         masked=True, ax=None, return_fig=False):
+        """
+        Plot the temperature structure using the provided surface instance.
+        Note that the brightness temperature only provides a good measure of
+        the true gas temperature when the lines are optically thick such that
+        :math:`\tau \gtrsim 5`.
+
+        Args:
+            surface (surface instance): The extracted emission surface.
+            side (optional[str]): The emission side to plot, must be either
+                ``'both'``, ``'front'`` or ``'back'``.
+            reflect (optional[bool]): Whether to reflect the back side of the
+                disk about the midplane. Default is ``False``.
+            masked (optional[bool]): Whether to plot the masked points, the
+                default, or all extracted points.
+            ax (optional[axes instance]): The Matplolib axis to use for
+                plotting. If none is provided, one will be generated. If an
+                axis is provided, the same color scaling will be used.
+            return_fig (optional[bool]): If no axis is provided, whether to
+                return the Matplotlib figure. The axis can then be accessed
+                through ``fig.axes[0]``.
+
+        Returns:
+            If ``return_fig=True``, the Matplotlib figure used for plotting.
+        """
+
+        # Generate plotting axes. If a previous axis has been provided, we
+        # use the limits used for the most recent call of `plt.scatter` to set
+        # the same `vmin` and `vmax` values for ease of comparison. We also
+        # test to see if there's a second axis in the figure
+
+        if ax is None:
+            fig, ax = plt.subplots()
+            min_T, max_T = None, None
+            colorbar = True
+        else:
+            return_fig = False
+            min_T, max_T = 1e10, -1e10
+            for child in ax.get_children():
+                try:
+                    _min_T, _max_T = child.get_clim()
+                    min_T = min(_min_T, min_T)
+                    max_T = max(_max_T, max_T)
+                except (AttributeError, TypeError):
+                    continue
+            colorbar = False
+
+        # Plot each side separately to have different colors.
+
+        r, z, Tb = np.empty(1), np.empty(1), np.empty(1)
+        if side.lower() not in ['front', 'back', 'both']:
+            raise ValueError(f"Unknown `side` value {side}.")
+        if side.lower() in ['front', 'both']:
+            r = np.concatenate([r, surface.r(side='front', masked=masked)])
+            z = np.concatenate([z, surface.z(side='front', masked=masked)])
+            _Tb = self.jybeam_to_Tb(surface.I(side='front', masked=masked))
+            Tb = np.concatenate([Tb, _Tb])
+        if side.lower() in ['back', 'both']:
+            r = np.concatenate([r, surface.r(side='back', masked=masked)])
+            _z = surface.z(side='back', reflect=reflect, masked=masked)
+            z = np.concatenate([z, _z])
+            _Tb = self.jybeam_to_Tb(surface.I(side='back', masked=masked))
+            Tb = np.concatenate([Tb, _Tb])
+        r, z, Tb = r[1:], z[1:], Tb[1:]
+        min_T = np.nanmin(Tb) if min_T is None else min_T
+        max_T = np.nanmax(Tb) if max_T is None else max_T
+
+        # Three plots to include an outline without affecting the perceived
+        # alpha of the points.
+
+        ax.scatter(r, z, color='k', marker='o', lw=2.0)
+        ax.scatter(r, z, color='w', marker='o', lw=1.0)
+        ax.scatter(r, z, c=Tb, marker='o', lw=0.0, vmin=min_T,
+                   vmax=max_T, alpha=0.2, cmap='RdYlBu_r')
+
+        # Gentrification.
+
+        ax.set_xlabel("Radius (arcsec)")
+        ax.set_ylabel("Height (arcsec)")
+        if colorbar:
+            fig.set_size_inches(fig.get_figwidth() * 1.2,
+                                fig.get_figheight(),
+                                forward=True)
+            im = ax.scatter(r, z * np.nan, c=Tb, marker='.', vmin=min_T,
+                            vmax=max_T, cmap='RdYlBu_r')
+            cb = plt.colorbar(im, ax=ax, pad=0.02)
+            cb.set_label("T (K)", rotation=270, labelpad=13)
+
+        # Returns.
 
         if return_fig:
             return fig
