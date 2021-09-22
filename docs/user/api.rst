@@ -1,8 +1,8 @@
 API
 ===
 
-```observation``
-----------------
+``observation``
+---------------
 
 This class is built upon the `imagecube` class from `GoFish <https://github.com/richteague/gofish>`_,
 so contains all functionality described there.
