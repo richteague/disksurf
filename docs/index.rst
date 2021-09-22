@@ -35,6 +35,7 @@ installed correctly.
 Support
 *******
 
+Information for all the functions can be found in the `API <https://disksurf.readthedocs.io/en/latest/user/api.html>`_ documentation.
 If you are having issues, please open a `issue <https://github.com/richteague/disksurf/issues>`_ on the GitHub page.
 
 .. toctree::
