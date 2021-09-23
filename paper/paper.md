@@ -14,7 +14,7 @@ authors:
   - name: Jane Huang
     orcid: 0000-0001-6947-6072
     affiliation: "2, 3"
-  - name:
+  - name: Feilong Meng
     affiliation: 2
 affiliations:
  - name: Center for Astrophysics | Harvard & Smithsonian, 60 Garden St., Cambridge, MA 02138, USA
@@ -30,7 +30,7 @@ bibliography: paper.bib
 
 # Summary
 
- `disksurf` implements the method presented in `@pinte:2018` to extract the molecular emission surface (i.e., the height above the midplane from which molecular emission arises) in moderately inclined protoplanetary disks. The Python-based code leverages the open-source `gofish` `[@gofish]` package to read in and interact with FITS data cubes used for essentially all astronomical observations at submillimeter wavelengths. For a given set of geometric parameters specified by the user, `disksurf` will return a surface object containing both the disk-centric coordinates of the surface as well as the gas temperature and rotation velocity at those locations. The user is able to 'filter' the returned surface using a variety of clipping and smoothing functions. Several simple analytical forms commonly adopted in the protoplanetary disk literature can then be fit to this surface using either a chi-squared minimization with `scipy` `[@Virtanen:2020]` or through an Monte-Carlo Markov-Chain approach with `emcee` `[@Foreman-Mackey:2016]`. To verify the 3D geometry of the system is well constrained, `disksurf` also provides diagnostic functions to plot the emission surface over channel maps of line emission (i.e., the emission morphology for a specific frequency).
+ `disksurf` implements the method presented in `@pinte:2018` to extract the molecular emission surface (i.e., the height above the midplane from which molecular emission arises) in moderately inclined protoplanetary disks. The Python-based code leverages the open-source `GoFish` `[@GoFish]` package to read in and interact with FITS data cubes used for essentially all astronomical observations at submillimeter wavelengths. The code also uses the open-source `detect_peaks.py` routine from `@Duarte:2021` for peak detection. For a given set of geometric parameters specified by the user, `disksurf` will return a surface object containing both the disk-centric coordinates of the surface as well as the gas temperature and rotation velocity at those locations. The user is able to 'filter' the returned surface using a variety of clipping and smoothing functions. Several simple analytical forms commonly adopted in the protoplanetary disk literature can then be fit to this surface using either a chi-squared minimization with `scipy` `[@Virtanen:2020]` or through an Monte-Carlo Markov-Chain approach with `emcee` `[@Foreman-Mackey:2016]`. To verify the 3D geometry of the system is well constrained, `disksurf` also provides diagnostic functions to plot the emission surface over channel maps of line emission (i.e., the emission morphology for a specific frequency).
 
 # Statement of need
 
@@ -42,6 +42,6 @@ While the measurement of the emission surface only requires simple geometrical t
 
 # Acknowledgements
 
-We acknowledge help from Christophe Pinte in benchmarking early versions of the code with those presented in the original paper detailing the method, `@pinte:2018`.
+We acknowledge help from Christophe Pinte in benchmarking early versions of the code with those presented in the original paper detailing the method, `@pinte:2018`. R.T. acknowledges support from the Smithsonian Institution as a Submillimeter Array (SMA) Fellow. C.J.L. acknowledges funding from the National Science Foundation Graduate Research Fellowship under Grant DGE1745303. Support for J.H. was provided by NASA through the NASA Hubble Fellowship grant #HST-HF2-51460.001- A awarded by the Space Telescope Science Institute, which is operated by the Association of Universities for Research in Astronomy, Inc., for NASA, under contract NAS5-26555.
 
 # References
