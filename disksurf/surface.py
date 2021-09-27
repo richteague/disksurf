@@ -12,6 +12,7 @@ class surface(object):
         r_f (array): Radial position of the front surface in [arcsec].
         z_f (array): Vertical position of the front surface in [arcsec].
         I_f (array): Intensity along the front surface in [Jy/beam].
+        T_f (array): Brightness temperature along the front surface in [K].
         v (array): Velocity in [km/s].
         x (array): Distance along the major axis the point was extracted in
             [arcsec].
@@ -22,6 +23,7 @@ class surface(object):
         r_b (array): Radial position of the back surface in [arcsec].
         z_b (array): Vertical position of the back surface in [arcsec].
         I_b (array): Intensity along the back surface in [Jy/beam].
+        T_b (array): Brightness temperature along the back surface in [K].
         y_n_b (array): Distance along the minor axis of the near peak for the
             back surface in [arcsec].
         y_f_b (array): Distance along the minor axis of the far peak for the
@@ -43,8 +45,9 @@ class surface(object):
             extraction in [arcsec].
     """
 
-    def __init__(self, r_f, z_f, I_f, v, x, y_n, y_f, r_b, z_b, I_b, y_n_b,
-                 y_f_b, chans, rms, x0, y0, inc, PA, r_min, r_max):
+    def __init__(self, r_f, z_f, I_f, T_f, v, x, y_n, y_f, r_b, z_b, I_b,
+                 T_b, y_n_b, y_f_b, chans, rms, x0, y0, inc, PA, r_min,
+                 r_max):
 
         # Parameters used to extract the emission surface.
 
@@ -63,9 +66,11 @@ class surface(object):
         self._r_f = np.squeeze(r_f)[idx]
         self._z_f = np.squeeze(z_f)[idx]
         self._I_f = np.squeeze(I_f)[idx]
+        self._T_f = np.squeeze(T_f)[idx]
         self._r_b = np.squeeze(r_b)[idx]
         self._z_b = np.squeeze(z_b)[idx]
         self._I_b = np.squeeze(I_b)[idx]
+        self._T_b = np.squeeze(T_b)[idx]
 
         self._v = np.squeeze(v)[idx]
         self._x = np.squeeze(x)[idx]
@@ -167,6 +172,36 @@ class surface(object):
                 i_tmp = self._I_b.copy()
             i = np.concatenate([i, i_tmp])
         return np.squeeze(i[1:])
+
+    def T(self, side='front', masked=True):
+        """
+        Brightness temperature at the (r, z) coordinate in [K].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Brightness temperature at the (r, z) coordinate in [K].
+        """
+        if side not in ['front', 'back', 'both']:
+            raise ValueError(f"Unknown `side` value {side}.")
+        T = np.empty(1)
+        if side in ['front', 'both']:
+            if masked:
+                T_tmp = self._T_f[self._mask_f].copy()
+            else:
+                T_tmp = self._T_f.copy()
+            T = np.concatenate([T, T_tmp])
+        if side in ['back', 'both']:
+            if masked:
+                T_tmp = self._T_b[self._mask_b].copy()
+            else:
+                T_tmp = self._T_b.copy()
+            T = np.concatenate([T, T_tmp])
+        return np.squeeze(T[1:])
 
     def v(self, side='front', masked=True):
         """
@@ -510,7 +545,7 @@ class surface(object):
                        reflect=True, masked=True):
         """
         Bin the emisison surface onto a regular grid. This is a simple wrapper
-        to the ``bin_parameter`` function.
+        to the ``binned_parameter`` function.
 
         Args:
             rvals (optional[array]): Desired bin centers.
@@ -526,11 +561,11 @@ class surface(object):
             The bin centers, ``r`, and the average emission surface, ``z``,
             with then uncertainty, ``dz``, given as the bin standard deviation.
         """
-        return self.bin_parameter('z', rvals=rvals, rbins=rbins, side=side,
-                                  reflect=reflect, masked=masked)
+        return self.binned_parameter('z', rvals=rvals, rbins=rbins, side=side,
+                                     reflect=reflect, masked=masked)
 
-    def bin_parameter(self, p, rvals=None, rbins=None, side='front',
-                      reflect=True, masked=True):
+    def binned_parameter(self, p, rvals=None, rbins=None, side='front',
+                         reflect=True, masked=True):
         """
         Bin the provided parameter onto a regular grid. If neither ``rvals``
         nor ``rbins`` is specified, will default to 50 bins across the radial

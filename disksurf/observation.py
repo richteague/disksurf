@@ -264,7 +264,9 @@ class observation(imagecube):
                     rb, zb = np.nan, np.nan
                     Inub = np.nan
 
-                peaks = [r, z, Inu, v, x_c, y_n, y_f, rb, zb, Inub, y_nb, y_fb]
+                peaks = [r, z, Inu, self.jybeam_to_Tb(Inu),
+                         v, x_c, y_n, y_f, rb, zb, Inub,
+                         self.jybeam_to_Tb(Inu), y_nb, y_fb]
                 _surface += [peaks]
 
         # Remove any non-finite values and return.
@@ -691,14 +693,12 @@ class observation(imagecube):
         if side.lower() in ['front', 'both']:
             r = np.concatenate([r, surface.r(side='front', masked=masked)])
             z = np.concatenate([z, surface.z(side='front', masked=masked)])
-            _Tb = self.jybeam_to_Tb(surface.I(side='front', masked=masked))
-            Tb = np.concatenate([Tb, _Tb])
+            Tb = np.concatenate([Tb, surface.T(side='front', masked=masked)])
         if side.lower() in ['back', 'both']:
             r = np.concatenate([r, surface.r(side='back', masked=masked)])
             _z = surface.z(side='back', reflect=reflect, masked=masked)
             z = np.concatenate([z, _z])
-            _Tb = self.jybeam_to_Tb(surface.I(side='back', masked=masked))
-            Tb = np.concatenate([Tb, _Tb])
+            Tb = np.concatenate([Tb, surface.T(side='back', masked=masked)])
         r, z, Tb = r[1:], z[1:], Tb[1:]
         min_T = np.nanmin(Tb) if min_T is None else min_T
         max_T = np.nanmax(Tb) if max_T is None else max_T
