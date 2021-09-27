@@ -25,7 +25,8 @@ class observation(imagecube):
 
     def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, chans=None,
                              r_min=None, r_max=None, smooth=None, nsigma=None,
-                             min_SNR=5, detect_peaks_kwargs=None):
+                             min_SNR=5, detect_peaks_kwargs=None,
+                             force_opposite_sides=True):
         """
         Implementation of the method described in Pinte et al. (2018). There
         are several pre-processing options to help with the peak detection.
@@ -51,6 +52,10 @@ class observation(imagecube):
                 to ``smooth_threshold``.
             detect_peaks_kwargs (optional[dict]): Keyword arguments passed to
                 ``detect_peaks``.
+            force_opposite_sides (optional[bool]): Whether to assert that all
+                pairs of peaks have one on either side of the major axis. By
+                default this is ``True`` which is a more conservative approach
+                but results in a lower sensitivity in the outer disk.
 
         Returns:
             A ``disksurf.surface`` instance containing the extracted emission
@@ -96,13 +101,14 @@ class observation(imagecube):
 
         if self.verbose:
             print("Detecting peaks...")
-        _surface = self._detect_peaks(data=data, inc=inc, r_min=r_min,
-                                      r_max=r_max, chans=chans, kernel=kernel,
-                                      min_SNR=min_SNR,
-                                      detect_peaks_kwargs=detect_peaks_kwargs)
+        _surf = self._detect_peaks(data=data, inc=inc, r_min=r_min,
+                                   r_max=r_max, chans=chans, kernel=kernel,
+                                   min_SNR=min_SNR,
+                                   detect_peaks_kwargs=detect_peaks_kwargs,
+                                   force_opposite_sides=force_opposite_sides)
         if self.verbose:
             print("Done!")
-        return surface(*_surface, chans=chans, rms=self.estimate_RMS(),
+        return surface(*_surf, chans=chans, rms=self.estimate_RMS(),
                        x0=x0, y0=y0, inc=inc, PA=PA, r_min=r_min, r_max=r_max)
 
     # -- DATA MANIPULATION -- #
@@ -132,7 +138,8 @@ class observation(imagecube):
         return data
 
     def _detect_peaks(self, data, inc, r_min, r_max, chans, min_SNR=5.0,
-                      kernel=None, return_back=True, detect_peaks_kwargs=None):
+                      kernel=None, return_back=True, detect_peaks_kwargs=None,
+                      force_opposite_sides=True):
         """Wrapper for `detect_peaks.py`."""
 
         inc_rad = np.radians(inc)
@@ -203,9 +210,10 @@ class observation(imagecube):
 
                     # Remove points that are on the same side of the major
                     # axis of the disk. This may remove poinst in the outer
-                    # disk, but that's more conservative anyway.
+                    # disk, but that's more conservative anyway. There is the
+                    # `force_opposite_sides` switch to skip this if necessary.
 
-                    if y_f * y_n > 0.0:
+                    if y_f * y_n > 0.0 and force_opposite_sides:
                         raise ValueError("Out of bounds (major axis).")
 
                     # Calculate the deprojection, making sure the radius is
@@ -232,7 +240,7 @@ class observation(imagecube):
                         if min(data[c_idx, y_idx[-4:], x_idx]) < min_Inu:
                             raise ValueError("Out of bounds (RMS).")
                         y_nb, y_fb = sorted(self.yaxis[y_idx[-4:-2]])
-                        if y_fb * y_nb > 0.0:
+                        if y_fb * y_nb > 0.0 and force_opposite_sides:
                             raise ValueError("Out of bounds (major axis).")
                         y_cb = 0.5 * (y_fb + y_nb)
                         rb = np.hypot(x_c, (y_fb - y_cb) / np.cos(inc_rad))
