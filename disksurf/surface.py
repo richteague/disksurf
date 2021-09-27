@@ -558,8 +558,8 @@ class surface(object):
                 Default is ``True``.
 
         Returns:
-            The bin centers, ``r`, and the average emission surface, ``z``,
-            with then uncertainty, ``dz``, given as the bin standard deviation.
+            The bin centers, ``r``, and the average emission surface, ``z``,
+            with the uncertainty, ``dz``, given as the bin standard deviation.
         """
         return self.binned_parameter('z', rvals=rvals, rbins=rbins, side=side,
                                      reflect=reflect, masked=masked)
