@@ -22,10 +22,12 @@ class observation(imagecube):
     def __init__(self, path, FOV=None, velocity_range=None):
         super().__init__(path=path, FOV=FOV, velocity_range=velocity_range)
         self.data_aligned_rotated = {}
+        self.mask_keplerian = {}
 
     def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, chans=None,
                              r_min=None, r_max=None, smooth=None, nsigma=None,
                              min_SNR=5, detect_peaks_kwargs=None,
+                             keplerian_mask_kwargs=None,
                              force_opposite_sides=True):
         """
         Implementation of the method described in Pinte et al. (2018). There
@@ -51,7 +53,9 @@ class observation(imagecube):
             smooth_threshold_kwargs (optional[dict]): Keyword arguments passed
                 to ``smooth_threshold``.
             detect_peaks_kwargs (optional[dict]): Keyword arguments passed to
-                ``detect_peaks``.
+                ``detect_peaks``. If any values are duplicated from those
+                required for ``get_emission_surface``, they will be
+                overwritten.
             force_opposite_sides (optional[bool]): Whether to assert that all
                 pairs of peaks have one on either side of the major axis. By
                 default this is ``True`` which is a more conservative approach
@@ -69,14 +73,28 @@ class observation(imagecube):
         if self.verbose and abs(inc) < 10.0:
             print("WARNING: Inferences with close to face on disk are poor.")
 
-        # Determine the spatial and spectral region to fit.
+        # Determine the spatial and spectral region to fit. This includes a
+        # simple inner and outer radius, and a velocity range, but also the
+        # option to include a Keplerian mask. Note that for the Keplerian mask
+        # we will overwrite duplicate parameters with those from the initial
+        # function call.
 
         r_min = r_min or 0.0
         r_max = r_max or self.xaxis.max()
         if r_min >= r_max:
             raise ValueError("`r_min` must be less than `r_max`.")
 
-        chans, data = self._get_velocity_clip_data(chans=chans)
+        data = self.data.copy()
+        if keplerian_mask_kwargs is not None:
+            keplerian_mask_kwargs['x0'] = x0
+            keplerian_mask_kwargs['y0'] = y0
+            keplerian_mask_kwargs['inc'] = inc
+            keplerian_mask_kwargs['PA'] = PA
+            keplerian_mask_kwargs['r_min'] = r_min
+            keplerian_mask_kwargs['r_max'] = r_max
+            data *= self.keplerian_mask(**keplerian_mask_kwargs)
+
+        chans, data = self._get_velocity_clip_data(data=data, chans=chans)
 
         # Align and rotate the data such that the major axis is parallel with
         # the x-axis. We can save this as a copy for user later for plotting
@@ -113,15 +131,72 @@ class observation(imagecube):
 
     # -- DATA MANIPULATION -- #
 
-    def _get_velocity_clip_data(self, chans=None):
+    def keplerian_mask(self, x0, y0, inc, PA, mstar, vlsr, dist, r_min=0.0,
+                       r_max=None, width=2.0, smooth=1.0, tolerance=0.1):
+        """
+        Produce a Keplerian mask for the data.
+
+        Args:
+            x0 (float): Disk offset along the x-axis in [arcsec].
+            y0 (float): Disk offset along the y-axis in [arcsec].
+            inc (float): Disk inclination in [degrees].
+            PA (float): Disk position angle in [degrees].
+            mstar (float): Stellar mass in [Msun].
+            vlsr (float): Systemic velocity in [m/s].
+            dist (float): Source distance in [pc].
+            r_min (optional[float]): Inner radius in [arcsec].
+            r_max (optional[float]): Outer radius in [arcsec].
+            width (optional[float]): The spectral 'width' of the mask as a
+                fraction of the channel spacing.
+            smooth (optional[float]): Apply a convolution with a 2D Gaussian
+                with a FWHM of ``smooth`` to broaden the mask.
+            tolerance (optional[float]): The minimum value (between 0 and 1) to
+                consider part of the mask after convolution.
+
+        Returns:
+            A 3D array describing the mask with either 1 or 0.
+        """
+
+        # Generate line-of-sight velocity profile.
+
+        vkep = self.keplerian(x0=x0, y0=y0, inc=inc, PA=PA,
+                              mstar=mstar, vlsr=vlsr,
+                              dist=dist)
+
+        # Apply a radial mask. This will be in addition to the simple r_min and
+        # r_max cuts applied in `detect_peaks`.
+
+        rvals = self.disk_coords(x0=x0, y0=y0, inc=inc, PA=PA)[0]
+        r_max = rvals.max() if r_max is None else r_max
+        assert r_min < r_max, "r_min >= r_max"
+        rmask = np.logical_and(rvals >= r_min, rvals <= r_max)
+        vkep = np.where(rmask, vkep, np.nan)
+
+        # Generate the mask in 3D.
+
+        mask = abs(self.velax[:, None, None] - vkep[None, :, :])
+        mask = np.where(mask <= width * self.chan, 1.0, 0.0)
+
+        # Smooth the mask with a 2D Gaussian.
+
+        if smooth > 0.0:
+            print("Smoothing mask. May take a while...")
+            from scipy.ndimage import gaussian_filter
+            kernel = smooth / self.dpix / 2.355
+            mask = np.array([gaussian_filter(c, kernel) for c in mask])
+            mask = np.where(mask >= tolerance, 1.0, 0.0)
+        assert mask.shape == self.data.shape, "mask.shape != data.shape"
+        return mask
+
+    def _get_velocity_clip_data(self, data, chans=None):
         """Clip the data based on a provided channel range."""
-        chans = chans or [0, self.data.shape[0] - 1]
+        chans = chans or [0, data.shape[0] - 1]
         chans = np.atleast_2d(chans).astype('int')
         if chans.min() < 0:
             raise ValueError("`chans` has negative values.")
-        if chans.max() >= self.data.shape[0]:
+        if chans.max() >= data.shape[0]:
             raise ValueError("`chans` extends beyond the number of channels.")
-        return chans, self.data.copy()[chans.min():chans.max()+1]
+        return chans, data.copy()[chans.min():chans.max()+1]
 
     def _align_and_rotate_data(self, data, x0=None, y0=None, PA=None):
         """Align and rotate the data."""
@@ -360,7 +435,8 @@ class observation(imagecube):
 
     # -- PLOTTING FUNCTIONS -- #
 
-    def plot_channels(self, chans=None, velocities=None, return_fig=False):
+    def plot_channels(self, chans=None, velocities=None, return_fig=False,
+                      keplerian_mask_kwargs=None):
         """
         Plot the channels within the channel range or velocity range. Only one
         of ``chans`` or ``velocities`` can be specified. If neither is
@@ -376,12 +452,22 @@ class observation(imagecube):
                 specified if ``chans`` is also specified.
             return_fig (optional[bool]): Whether to return the Matplotlib
                 figure.
+            keplerian_mask_kwargs (optional[dict]): A dictionary of arguments
+                to pass to ``keplerian_mask`` such that the mask outline can
+                be overlaid.
 
         Returns:
             If ``return_fig=True``, the Matplotlib figure used for plotting.
         """
         from matplotlib.ticker import MaxNLocator
         import matplotlib.pyplot as plt
+
+        # Calculate the Keplerian mask.
+
+        if keplerian_mask_kwargs is not None:
+            mask = self.keplerian_mask(**keplerian_mask_kwargs)
+        else:
+            mask = None
 
         # Parse the channel and velocity ranges.
 
@@ -406,6 +492,9 @@ class observation(imagecube):
             ax.imshow(self.data[chans[0]+a], origin='lower',
                       extent=self.extent, vmax=0.75*np.nanmax(self.data),
                       vmin=0.0, cmap='binary_r')
+            if mask is not None:
+                ax.contour(self.xaxis, self.yaxis, mask[chans[0]+a], [0.5],
+                           colors='orangered', linestyles='--', linewidths=0.5)
             ax.xaxis.set_major_locator(MaxNLocator(5))
             ax.yaxis.set_major_locator(MaxNLocator(5))
             ax.grid(ls='--', lw=1.0, alpha=0.2)

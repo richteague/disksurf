@@ -633,15 +633,17 @@ class surface(object):
         Returns:
             The radius, ``r``, emission height, ``z``, and uncertainty, ``dz``.
         """
-        r = self.r(side=side, masked=masked)
-        z = self.rolling_statistic(p='z', func=np.nanmean, window=window,
-                                   side=side, reflect=reflect, masked=masked)
-        dz = self.rolling_statistic(p='z', func=np.nanstd, window=window,
-                                    side=side, reflect=reflect, masked=masked)
-        return r[np.argsort(r)], z, dz
+        r, z = self.rolling_statistic(p='z', func=np.nanmean, window=window,
+                                      side=side, reflect=reflect,
+                                      masked=masked, remove_NaN=False)
+        r, dz = self.rolling_statistic(p='z', func=np.nanstd, window=window,
+                                       side=side, reflect=reflect,
+                                       masked=masked, remove_NaN=False)
+        idx = np.isfinite(z) & np.isfinite(dz)
+        return r[idx], z[idx], dz[idx]
 
     def rolling_statistic(self, p, func=np.nanmean, window=0.1, side='front',
-                          reflect=True, masked=True):
+                          reflect=True, masked=True, remove_NaN=True):
         """
         Return the rolling statistic of the provided parameter.  As the radial
         sampling is unevenly spaced the kernel size, which is a fixed number of
@@ -658,21 +660,29 @@ class surface(object):
                 the back side of the disk about the midplane.
             masked (Optional[bool]): Whether to use the masked data points.
                 Default is ``True``.
+            remove_NaN (Optional[bool]): Whether to remove the NaNs.
 
         Returns:
-            The rolling statistic, ``s``.
+            The radius, ``r`` and the rolling statistic, ``s``. All NaNs will
+            have been removed.
         """
         r = ', reflect={}'.format(str(reflect)) if p == 'z' else ''
         x = self.r(side=side, masked=masked)
         y = eval("self.{}(side='{}', masked={}{})".format(p, side, masked, r))
-        y = y[np.argsort(x)]
+        idx = np.argsort(x)
+        x, y = x[idx], y[idx]
         w = self._get_rolling_stats_window(window=window,
                                            masked=masked,
                                            side=side)
         e = int((w - 1) / 2)
         yy = np.insert(y, 0, y[0] * np.ones(e))
         yy = np.insert(yy, -1, y[-1] * np.ones(e))
-        return np.squeeze([func(y[i-e+1:i+e+2]) for i in range(y.size)])
+        s = np.squeeze([func(y[i-e+1:i+e+2]) for i in range(y.size)])
+        if remove_NaN:
+            idx = np.isfinite(s)
+            return x[idx], s[idx]
+        else:
+            return x, s
 
     def _get_rolling_stats_window(self, window=0.1, side='front', masked=True):
         """Size of the window used for rolling statistics."""
@@ -738,6 +748,10 @@ class surface(object):
         r = self.r(side=side, masked=masked)
         z = self.z(side=side, reflect=True, masked=masked)
         dz = 1.0 / self.SNR(side=side, masked=masked)
+        nan_mask = np.isfinite(r) & np.isfinite(z) & np.isfinite(dz)
+        r, z, dz = r[nan_mask], z[nan_mask], dz[nan_mask]
+        idx = np.argsort(r)
+        r, z, dz = r[idx], z[idx], dz[idx]
 
         # If a distance is provided, convert all distances to [au]. We also
         # change the reference radius to 100 au unless specified.
@@ -852,6 +866,8 @@ class surface(object):
         dz = 1.0 / self.SNR(side=side, masked=masked)
         nan_mask = np.isfinite(r) & np.isfinite(z) & np.isfinite(dz)
         r, z, dz = r[nan_mask], z[nan_mask], dz[nan_mask]
+        idx = np.argsort(r)
+        r, z, dz = r[idx], z[idx], dz[idx]
 
         # If a distance is provided, convert all distances to [au]. We also
         # change the reference radius to 100 au unless specified.
@@ -1060,7 +1076,7 @@ class surface(object):
             r, z = self.fit_emission_surface(tapered_powerlaw=tapered_powerlaw,
                                              include_cavity=include_cavity,
                                              side=side, masked=masked,
-                                             return_fit=True)
+                                             return_model=True)
             idx = np.argsort(r)
             r, z = r[idx], z[idx]
             if side in ['front', 'both']:
