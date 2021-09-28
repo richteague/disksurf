@@ -15,6 +15,7 @@ authors:
     orcid: 0000-0001-6947-6072
     affiliation: "2, 3"
   - name: Feilong Meng
+    orcid: 0000-0003-0079-6830
     affiliation: 2
 affiliations:
  - name: Center for Astrophysics | Harvard & Smithsonian, 60 Garden St., Cambridge, MA 02138, USA
