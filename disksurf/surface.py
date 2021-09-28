@@ -640,7 +640,7 @@ class surface(object):
                                        side=side, reflect=reflect,
                                        masked=masked, remove_NaN=False)
         idx = np.isfinite(z) & np.isfinite(dz)
-        return r[idx], z[idx], dz[idx]
+        return np.squeeze(r[idx]), np.squeeze(z[idx]), np.squeeze(dz[idx])
 
     def rolling_statistic(self, p, func=np.nanmean, window=0.1, side='front',
                           reflect=True, masked=True, remove_NaN=True):

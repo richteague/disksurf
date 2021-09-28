@@ -86,6 +86,10 @@ class observation(imagecube):
 
         data = self.data.copy()
         if keplerian_mask_kwargs is not None:
+            duplicates = ['x0', 'y0', 'inc', 'PA', 'r_min', 'r_max']
+            if any([f in keplerian_mask_kwargs for f in duplicates]):
+                msg = "Duplicate argument found in keplerian_mask_kwargs."
+                print("WARNING: " + msg + "Overwriting parameters.")
             keplerian_mask_kwargs['x0'] = x0
             keplerian_mask_kwargs['y0'] = y0
             keplerian_mask_kwargs['inc'] = inc
@@ -100,12 +104,16 @@ class observation(imagecube):
         # the x-axis. We can save this as a copy for user later for plotting
         # or repeated surface extractions.
 
+        data = self._align_and_rotate_data(data=data, x0=x0, y0=y0, PA=PA)
+
+        """
         key = (x0, y0, PA, chans.min(), chans.max())
         try:
             data = self.data_aligned_rotated[key]
         except KeyError:
             data = self._align_and_rotate_data(data=data, x0=x0, y0=y0, PA=PA)
             self.data_aligned_rotated[key] = data
+        """
 
         # Define the smoothing kernel.
 
@@ -132,7 +140,7 @@ class observation(imagecube):
     # -- DATA MANIPULATION -- #
 
     def keplerian_mask(self, x0, y0, inc, PA, mstar, vlsr, dist, r_min=0.0,
-                       r_max=None, width=2.0, smooth=1.0, tolerance=0.1):
+                       r_max=None, width=2.0, smooth=None, tolerance=1e-4):
         """
         Produce a Keplerian mask for the data.
 
@@ -149,7 +157,9 @@ class observation(imagecube):
             width (optional[float]): The spectral 'width' of the mask as a
                 fraction of the channel spacing.
             smooth (optional[float]): Apply a convolution with a 2D Gaussian
-                with a FWHM of ``smooth`` to broaden the mask.
+                with a FWHM of ``smooth`` to broaden the mask. By default this
+                is four times the beam FWHM. If no smoothing is desired, set
+                this to ``0.0``.
             tolerance (optional[float]): The minimum value (between 0 and 1) to
                 consider part of the mask after convolution.
 
@@ -179,6 +189,7 @@ class observation(imagecube):
 
         # Smooth the mask with a 2D Gaussian.
 
+        smooth = 4.0 * self.bmaj if smooth is None else smooth
         if smooth > 0.0:
             print("Smoothing mask. May take a while...")
             from scipy.ndimage import gaussian_filter
