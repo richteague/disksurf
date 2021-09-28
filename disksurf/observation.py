@@ -135,7 +135,8 @@ class observation(imagecube):
         if self.verbose:
             print("Done!")
         return surface(*_surf, chans=chans, rms=self.estimate_RMS(),
-                       x0=x0, y0=y0, inc=inc, PA=PA, r_min=r_min, r_max=r_max)
+                       x0=x0, y0=y0, inc=inc, PA=PA, r_min=r_min, r_max=r_max,
+                       data=data)
 
     # -- DATA MANIPULATION -- #
 
@@ -684,7 +685,7 @@ class observation(imagecube):
                                 constrained_layout=True)
 
         velax = self.velax[surface.chans.min():surface.chans.max()+1]
-        data = self.data_aligned_rotated[surface.data_aligned_rotated_key]
+        data = surface.data.copy()
 
         for vv, ax in zip(velocities, axs.flatten()):
 

@@ -43,11 +43,13 @@ class surface(object):
             extraction in [arcsec].
         r_max (array): Maximum disk-centric radius used in the emission surface
             extraction in [arcsec].
+        data (array): The data used to extract the emission surface in
+            [Jy/beam].
     """
 
     def __init__(self, r_f, z_f, I_f, T_f, v, x, y_n, y_f, r_b, z_b, I_b,
                  T_b, y_n_b, y_f_b, chans, rms, x0, y0, inc, PA, r_min,
-                 r_max):
+                 r_max, data):
 
         # Parameters used to extract the emission surface.
 
@@ -59,6 +61,7 @@ class surface(object):
         self.r_min = r_min
         self.r_max = r_max
         self.rms = rms
+        self.data = data
 
         # Properties of the emission surface.
 
