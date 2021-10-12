@@ -979,9 +979,9 @@ class surface(object):
             r_cavity = theta[labels.index('r_cavity')]
         except ValueError:
             r_cavity = 0.0
-        return surface.__tapered_powerlaw(r=r, z0=z0, q=q, r_taper=r_taper,
-                                          q_taper=q_taper, r_cavity=r_cavity,
-                                          r0=r0)
+        return surface._tapered_powerlaw(r=r, z0=z0, q=q, r_taper=r_taper,
+                                         q_taper=q_taper, r_cavity=r_cavity,
+                                         r0=r0)
 
     @staticmethod
     def _powerlaw(r, z0, q, r_cavity=0.0, r0=1.0):
