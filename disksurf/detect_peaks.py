@@ -24,10 +24,10 @@ SOFTWARE.
 Detect peaks in data based on their amplitude and other features.
 
 Originally written by Marcos Duarte with an MIT License.
-Only modification by Richard Teague was removal of warnings.
+Only modificationd by Richard Teague were removal of warnings and any
+__future__ imports.
 """
 
-from __future__ import division, print_function
 import numpy as np
 
 __author__ = "Marcos Duarte, https://github.com/demotu"
