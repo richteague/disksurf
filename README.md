@@ -37,3 +37,33 @@ surface.plot_surface()                                  # plot the surface
 ```
 
 Follow our [tutorials](https://disksurf.readthedocs.io/en/latest/tutorials/tutorial_1.html) for a quick guide on how to use `disksurf` with DSHARP data and some of the additional functions that will help you extract the best surface possible.
+
+## Citation
+
+If you use this software, please remember to cite both [Pinte et al. (2018)]() for the method, and [Teague et al. (2021)] for the software.
+
+```tex
+@article{2018A&A...609A..47P,
+  doi = {10.1051/0004-6361/201731377},
+  year = {2018},
+  volume = {609},
+  eid = {A47},
+  pages = {A47},
+  author = {{Pinte}, C. and {M{\'e}nard}, F. and {Duch{\^e}ne}, G. and {Hill}, T. and {Dent}, W.~R.~F. and {Woitke}, P. and {Maret}, S. and {van der Plas}, G. and {Hales}, A. and {Kamp}, I. and {Thi}, W.~F. and {de Gregorio-Monsalvo}, I. and {Rab}, C. and {Quanz}, S.~P. and {Avenhaus}, H. and {Carmona}, A. and {Casassus}, S.},
+  title = "{Direct mapping of the temperature and velocity gradients in discs. Imaging the vertical CO snow line around IM Lupi}",
+  journal = {\aap}
+}
+
+@article{disksurf,
+  doi = {10.21105/joss.03827},
+  url = {https://doi.org/10.21105/joss.03827},
+  year = {2021},
+  publisher = {The Open Journal},
+  volume = {6},
+  number = {67},
+  pages = {3827},
+  author = {Richard Teague and Charles J. Law and Jane Huang and Feilong Meng},
+  title = {disksurf: Extracting the 3D Structure of Protoplanetary Disks},
+  journal = {Journal of Open Source Software}
+}
+```
