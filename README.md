@@ -9,6 +9,9 @@
   <a href='https://doi.org/10.21105/joss.03827'>
     <img src='https://joss.theoj.org/papers/10.21105/joss.03827/status.svg' alt='DOI'>
   </a>
+  <a href="https://zenodo.org/badge/latestdoi/184391824">
+    <img src="https://zenodo.org/badge/184391824.svg" alt="DOI">
+  </a>
 </p>
 
 ## What is it?
@@ -42,7 +45,7 @@ Follow our [tutorials](https://disksurf.readthedocs.io/en/latest/tutorials/tutor
 
 If you use this software, please remember to cite both [Pinte et al. (2018)]() for the method, and [Teague et al. (2021)] for the software.
 
-```tex
+```
 @article{2018A&A...609A..47P,
   doi = {10.1051/0004-6361/201731377},
   year = {2018},
