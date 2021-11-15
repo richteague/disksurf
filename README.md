@@ -6,6 +6,9 @@
   <a href='https://disksurf.readthedocs.io/en/latest/?badge=latest'>
     <img src='https://readthedocs.org/projects/disksurf/badge/?version=latest' alt='Documentation Status' />
   </a>
+  <a href='https://doi.org/10.21105/joss.03827'>
+    <img src='https://joss.theoj.org/papers/10.21105/joss.03827/status.svg' alt='DOI'>
+  </a>
 </p>
 
 ## What is it?
