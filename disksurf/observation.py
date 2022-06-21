@@ -1,4 +1,5 @@
 from .detect_peaks import detect_peaks
+from astropy.convolution import convolve, Gaussian2DKernel
 import matplotlib.pyplot as plt
 from .surface import surface
 from gofish import imagecube
@@ -24,10 +25,10 @@ class observation(imagecube):
         self.data_aligned_rotated = {}
         self.mask_keplerian = {}
 
-    def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, chans=None,
-                             r_min=None, r_max=None, smooth=None, nsigma=None,
-                             min_SNR=5, detect_peaks_kwargs=None,
-                             keplerian_mask_kwargs=None,
+    def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, vlsr=0.0,
+                             chans=None, r_min=None, r_max=None, smooth=None,
+                             nsigma=None, min_SNR=5, detect_peaks_kwargs=None,
+                             get_keplerian_mask_kwargs=None,
                              force_opposite_sides=True):
         """
         Implementation of the method described in Pinte et al. (2018). There
@@ -38,6 +39,7 @@ class observation(imagecube):
             PA (float): Disk position angle in [degrees].
             x0 (optional[float]): Disk offset along the x-axis in [arcsec].
             y0 (optional[float]): Disk offset along the y-axis in [arcsec].
+            vlsr (optional[float]): Systemic velocity in [m/s].
             chans (optional[list]): First and last channels to include in the
                 inference.
             r_min (optional[float]): Minimuim radius in [arcsec] of values to
@@ -66,54 +68,39 @@ class observation(imagecube):
             surface.
         """
 
-        # Remove bad inclination:
-
-        if inc == 0.0:
-            raise ValueError("Cannot infer height with face on disk.")
-        if self.verbose and abs(inc) < 10.0:
-            print("WARNING: Inferences with close to face on disk are poor.")
-
-        # Determine the spatial and spectral region to fit. This includes a
-        # simple inner and outer radius, and a velocity range, but also the
-        # option to include a Keplerian mask. Note that for the Keplerian mask
-        # we will overwrite duplicate parameters with those from the initial
-        # function call.
+        # Grab the cut down and masked data.
 
         r_min = r_min or 0.0
         r_max = r_max or self.xaxis.max()
         if r_min >= r_max:
             raise ValueError("`r_min` must be less than `r_max`.")
 
-        data = self.data.copy()
-        if keplerian_mask_kwargs is not None:
+        chans, data = self.get_aligned_rotated_data(inc=inc,
+                                                    PA=PA,
+                                                    x0=x0,
+                                                    y0=y0,
+                                                    chans=chans,
+                                                    r_min=r_min,
+                                                    r_max=r_max)
+
+        # Calculate a Keplerian mask.
+        # TODO: Check that the PA is defined correctly.
+
+        if get_keplerian_mask_kwargs is not None:
             duplicates = ['x0', 'y0', 'inc', 'PA', 'r_min', 'r_max']
-            if any([f in keplerian_mask_kwargs for f in duplicates]):
-                msg = "Duplicate argument found in keplerian_mask_kwargs."
+            if any([f in get_keplerian_mask_kwargs for f in duplicates]):
+                msg = "Duplicate argument found in get_keplerian_mask_kwargs."
                 print("WARNING: " + msg + "Overwriting parameters.")
-            keplerian_mask_kwargs['x0'] = x0
-            keplerian_mask_kwargs['y0'] = y0
-            keplerian_mask_kwargs['inc'] = inc
-            keplerian_mask_kwargs['PA'] = PA
-            keplerian_mask_kwargs['r_min'] = r_min
-            keplerian_mask_kwargs['r_max'] = r_max
-            data *= self.keplerian_mask(**keplerian_mask_kwargs)
-
-        chans, data = self._get_velocity_clip_data(data=data, chans=chans)
-
-        # Align and rotate the data such that the major axis is parallel with
-        # the x-axis. We can save this as a copy for user later for plotting
-        # or repeated surface extractions.
-
-        data = self._align_and_rotate_data(data=data, x0=x0, y0=y0, PA=PA)
-
-        """
-        key = (x0, y0, PA, chans.min(), chans.max())
-        try:
-            data = self.data_aligned_rotated[key]
-        except KeyError:
-            data = self._align_and_rotate_data(data=data, x0=x0, y0=y0, PA=PA)
-            self.data_aligned_rotated[key] = data
-        """
+            get_keplerian_mask_kwargs['x0'] = 0.0
+            get_keplerian_mask_kwargs['y0'] = 0.0
+            get_keplerian_mask_kwargs['inc'] = inc
+            get_keplerian_mask_kwargs['PA'] = 90.0
+            get_keplerian_mask_kwargs['r_min'] = r_min
+            get_keplerian_mask_kwargs['r_max'] = r_max
+            mask = self.get_keplerian_mask(**get_keplerian_mask_kwargs)
+        else:
+            mask = np.ones(data.shape).astype('bool')
+        data = np.where(mask, data, 0.0)
 
         # Define the smoothing kernel.
 
@@ -128,20 +115,352 @@ class observation(imagecube):
         if self.verbose:
             print("Detecting peaks...")
         _surf = self._detect_peaks(data=data, inc=inc, r_min=r_min,
-                                   r_max=r_max, chans=chans, kernel=kernel,
-                                   min_SNR=min_SNR,
+                                   r_max=r_max, vlsr=vlsr, chans=chans,
+                                   kernel=kernel, min_SNR=min_SNR,
                                    detect_peaks_kwargs=detect_peaks_kwargs,
                                    force_opposite_sides=force_opposite_sides)
         if self.verbose:
             print("Done!")
         return surface(*_surf, chans=chans, rms=self.estimate_RMS(),
-                       x0=x0, y0=y0, inc=inc, PA=PA, r_min=r_min, r_max=r_max,
-                       data=data)
+                       x0=x0, y0=y0, inc=inc, PA=PA, vlsr=vlsr, r_min=r_min,
+                       r_max=r_max, data=data, masks=mask)
+
+    def get_emission_surface_with_prior(self, prior_surface, nbeams=1.0,
+                                        min_SNR=0.0):
+        """
+        If a surface prior is already given then we can use that to determine
+        a mask to improve the peak detection.
+
+        Args:
+            prior_surface (surface instance): A previously derived ``suface``
+                instance from which the velocity profile and emission height
+                will be taken to define the new mask for the surface fitting.
+            nbeams (optional[float]): The size of the convolution kernel in
+                beam major FWHM that is used to broaden the mask. Larger values
+                are more conservative and will take longer to converge.
+            min_SNR (optional[float]): Specift a minimum SNR of the extracted
+                points. Will used the RMS measured from the ``surface``.
+
+        Returns:
+            A ``disksurf.surface`` instance containing the extracted emission
+            surface.
+        """
+
+        # Generate the surface based masks and SNR based masked. They will be
+        # combined with ``np.logical_and``. TODO: Check that
+
+        data = prior_surface.data
+        chans = prior_surface.chans
+        mask_near, mask_far = self.get_surface_mask(prior_surface,
+                                                    nbeams,
+                                                    min_SNR)
+
+        # Find the peaks for just the near side, and then the back side and
+        # concatenate the results into a new surface instance.
+        # TODO: Would this be better to extract this and make a new function?
+
+        print("Detecting peaks...")
+
+        _surface = []
+        inc_rad = np.radians(prior_surface.inc)
+        for c_idx in range(data.shape[0]):
+
+            # Check that the channel is in one of the channel ranges. If not,
+            # we skip to the next channel index.
+
+            c_idx_tot = c_idx + chans.min()
+            if not any([ct[0] <= c_idx_tot <= ct[1] for ct in chans]):
+                continue
+
+            for x_idx in range(self.xaxis.size):
+
+                # Check if there is any reigons to fit for this column. It
+                # shouldn't matter which of the two masks we use as they should
+                # only have unmasked regions if both have unmasked regions.
+
+                points_near = np.any(mask_near[c_idx_tot, :, x_idx])
+                points_far = np.any(mask_far[c_idx_tot, :, x_idx])
+                if not points_near or not points_far:
+                    continue
+
+                # We cna skip a lot of the conditions from the standard
+                # detect_peaks loop because we just use the mask to determine
+                # if it's a channel to fit.
+                # TODO: This could be vectorized relatively(?) easily.
+
+                x_c = self.xaxis[x_idx]
+                y_n_idx = np.nanargmax(np.where(mask_near[c_idx_tot, :, x_idx],
+                                       data[c_idx, :, x_idx], np.nan))
+                y_f_idx = np.nanargmax(np.where(mask_far[c_idx_tot, :, x_idx],
+                                       data[c_idx, :, x_idx], np.nan))
+
+                if data[c_idx, y_f_idx, x_idx] > data[c_idx, y_n_idx, x_idx]:
+                    y_n, y_f = self.yaxis[y_n_idx], self.yaxis[y_f_idx]
+                    Inu = data[c_idx, y_f_idx, x_idx]
+                else:
+                    y_n, y_f = self.yaxis[y_f_idx], self.yaxis[y_n_idx]
+                    Inu = data[c_idx, y_n_idx, x_idx]
+
+                # Use (x_c, y_n, y_f, vlsr) to calculate (y_c, r, z, v)
+                # following Pinte et al. (2018).
+
+                y_c = 0.5 * (y_f + y_n)
+                r = np.hypot(x_c, (y_f - y_c) / np.cos(inc_rad))
+                z = y_c / np.sin(inc_rad)
+                v_chan = self.velax[c_idx_tot]
+                v_int = (v_chan - prior_surface.vlsr) * r
+                v_int /= x_c * np.sin(inc_rad)
+                Tb = self.jybeam_to_Tb(Inu)
+
+                # Add these values to the surface list. Set all the back side
+                # values to NaNs.
+
+                _surface += [[r, z, Inu, Tb, v_int, x_c, y_n, y_f, np.nan,
+                              np.nan, np.nan, np.nan, np.nan, np.nan, v_chan]]
+        print("Done")
+
+        # Remove any non-finite values and return.
+
+        _surface = np.squeeze(_surface).T
+        return surface(*_surface[:, np.isfinite(_surface[2])],
+                       chans=prior_surface.chans, rms=prior_surface.rms,
+                       x0=prior_surface.x0, y0=prior_surface.y0,
+                       inc=prior_surface.inc, PA=prior_surface.PA,
+                       vlsr=prior_surface.vlsr, r_min=prior_surface.r_min,
+                       r_max=prior_surface.r_max, data=data,
+                       masks=[mask_near, mask_far])
+
+    def get_emission_surface_iterative(self, prior_surface, N=5, nbeams=1.0,
+                                       min_SNR=0.0):
+        """
+        Iteratively calculate the emission surface using ``N`` iterations. For
+        both ``nbeams`` and ``min_SNR`` either a single value can be provided,
+        and that value will be used for all iterations, or a list can be given
+        to allow for a different value for each iteration. This is useful if
+        you want to start with a large ``nbeams`` and gradually get smaller.
+
+        Note: make sure the starting surface, ``prior_surface`` is reasonable
+        so this does not diverge!
+
+        Args:
+            prior_surface (surface instance): A previously derived ``suface``
+                instance from which the velocity profile and emission height
+                will be taken to define the new mask for the surface fitting.
+            nbeams (optional[float]): The size of the convolution kernel in
+                beam major FWHM that is used to broaden the mask. Larger values
+                are more conservative and will take longer to converge.
+            min_SNR (optional[float]): Specift a minimum SNR of the extracted
+                points. Will used the RMS measured from the ``surface``.
+
+        Returns:
+            A ``disksurf.surface`` instance containing the extracted emission
+            surface.
+        """
+        _s = prior_surface
+        nbeams = np.atleast_1d(nbeams)
+        min_SNR = np.atleast_1d(min_SNR)
+        for iter in range(N):
+            print(f"Running iteration {iter+1}/{N}...")
+            idx_a = iter % nbeams.size
+            idx_b = iter % min_SNR.size
+            _s = self.get_emission_surface_with_prior(prior_surface=_s,
+                                                      nbeams=nbeams[idx_a],
+                                                      min_SNR=min_SNR[idx_b])
+        return _s
+
+    def get_aligned_rotated_data(self, inc, PA, x0=0.0, y0=0.0, chans=None,
+                                 r_min=None, r_max=None,
+                                 get_keplerian_mask_kwargs=None):
+        """
+        Wrapper to get the aligned and rotated data ready for peak detection.
+
+        Args:
+            inc (float): Disk inclination in [degrees].
+            PA (float): Disk position angle in [degrees].
+            x0 (optional[float]): Disk offset along the x-axis in [arcsec].
+            y0 (optional[float]): Disk offset along the y-axis in [arcsec].
+            chans (optional[list]): First and last channels to include in the
+                inference.
+            r_min (optional[float]): Minimuim radius in [arcsec] of values to
+                return. Default is all possible values.
+            r_max (optional[float]): Maximum radius in [arcsec] of values to
+                return. Default is all possible values.
+            get_keplerian_mask_kwargs (optional[dict]): A dictionary of values
+                used to build a Keplerian mask. This requires at least the
+                dynamical mass, ``mstar`` and the source distance, ``dist``.
+
+        Returns:
+            data
+        """
+        # Remove bad inclination:
+
+        if inc == 0.0:
+            raise ValueError("Cannot infer height with face on disk.")
+        if self.verbose and abs(inc) < 10.0:
+            print("WARNING: Inferences with close to face on disk are poor.")
+
+        # Determine the spectral regin to fit.
+
+        chans, data = self._get_velocity_clip_data(self.data.copy(), chans)
+
+        # Align and rotate the data such that the major axis is parallel with
+        # the x-axis. The red-shifted axis will be aligned with positive x
+        # values. TODO: We can save this as a copy for user later for plotting
+        # or repeated surface extractions.
+
+        data = self._align_and_rotate_data(data=data, x0=x0, y0=y0, PA=PA)
+
+        return chans, data
 
     # -- DATA MANIPULATION -- #
 
-    def keplerian_mask(self, x0, y0, inc, PA, mstar, vlsr, dist, r_min=0.0,
-                       r_max=None, width=2.0, smooth=None, tolerance=1e-4):
+    def get_SNR_mask(self, surface=None, min_SNR=0.0):
+        """
+        Return a SNR based mask where pixels with intensities less than
+        ``min_SNR * RMS`` are masked.
+
+        Args:
+            surface (optional[surface instance]): A previously derived
+                ``suface`` instance.
+            min_SNR (optional[float]): Specift a minimum SNR of the extracted
+                points. Will used the RMS measured from the ``surface``.
+
+        Return:
+            SNR_mask.
+        """
+        if surface is None:
+            data = self.data
+            rms = self.estimate_RMS()
+        else:
+            data = surface.data
+            rms = surface.rms
+        return np.where(data >= min_SNR * rms, True, False)
+
+    def get_surface_mask(self, surface, nbeams=1.0, min_SNR=0.0):
+        """
+        Calculate a mask based on a prior surface, ``surface``. Both the
+        radial velocity profile and the emission surface will be used to
+        calculate the expected isovelocity contours for the top side of the
+        disk in each channel. These contours are then used to define a mask for
+        the fitting of a new surface.
+
+        The mask is initially a top hat function centered on the isovelocity
+        contour, but can be broadened through the convolution of a 2D Gaussian
+        kernel, the size of which is controlled with ``nbeams``.
+
+        Note that ``data.shape != self.data.shape``.
+
+        Args:
+            surface (surface instance): A previously derived ``suface``
+                instance from which the velocity profile and emission height
+                will be taken to define the new mask for the surface fitting.
+            nbeams (optional[float]): The size of the convolution kernel in
+                beam major FWHM that is used to broaden the mask. Larger values
+                are more conservative and will take longer to converge.
+            min_SNR (optional[float]): Specift a minimum SNR of the extracted
+                points. Will used the RMS measured from the ``surface``.
+
+        Returns:
+            mask_near, mask_far.
+        """
+
+        # Create an interpolatable emission surface to define the regions we
+        # want to fit and an interpolatable rotation profile.
+        # TODO: Check how we want to pass parameters to this function.
+
+        z_func = surface.interpolate_parameter('z', method='binned')
+        v_func = surface.interpolate_parameter('v', method='binned')
+
+        # Based on the emission surface we produce a v0 map for the top side of
+        # the disk. TODO: Verify the the choice of PA=90.0 is appropriate.
+
+        r, phi, _ = self.disk_coords(inc=surface.inc, PA=90.0, z_func=z_func)
+        v0 = v_func(r) * np.cos(phi) * np.sin(np.radians(surface.inc))
+        v0 += surface.vlsr
+
+        # Split the v0 map into front and back sides based on the change in v0
+        # as a function of y. One side is always increasing, the other is
+        # always decreasing.
+
+        dv = np.sign(np.diff(v0, axis=0))
+        dv = np.vstack([dv[0], dv])
+
+        # Create a SNR mask so that can be included in the convolution.
+
+        mask_snr = self.get_SNR_mask(surface, min_SNR)
+
+        # Create a mask for the near side and the far side of the disk.
+
+        print("Calculating masks...")
+
+        mask_near, mask_far = [], []
+        for cidx, velo in enumerate(self.velax):
+
+            # Skip the unused channels.
+
+            if not any([ct[0] <= cidx <= ct[1] for ct in surface.chans]):
+                mask_near += [np.zeros(self.data[0].shape).astype(bool)]
+                mask_far += [np.zeros(self.data[0].shape).astype(bool)]
+                continue
+
+            # Find the absolute deviation in order to define the radial range
+            # of the mask. A broader tolerance will lead to the masks extending
+            # to larger radii. TODO: Check how this is impacted with different
+            # inclinations of disks.
+
+            absolute_deviation = np.nanmin(abs(v0 - velo), axis=0)
+            radial_mask = absolute_deviation <= 0.25 * self.chan
+
+            # Masks are a top hat function with a width of the beam across the
+            # isovelocity contour, then convolved with a Gaussian kernel with a
+            # FWHM equal to that of the beam major axis.
+            # TODO: Check what values or defaults we want here.
+
+            isovelocity_t = abs(np.where(dv > 0, v0, -1e10) - velo)
+            isovelocity_t = np.nanargmin(isovelocity_t, axis=0)
+            isovelocity_b = abs(np.where(dv < 0, v0, -1e10) - velo)
+            isovelocity_b = np.nanargmin(isovelocity_b, axis=0)
+
+            mask_t = np.where(radial_mask, self.yaxis[isovelocity_t], np.nan)
+            mask_t = abs(self.yaxis[:, None] - mask_t[None, :]) <= self.bmaj
+            mask_b = np.where(radial_mask, self.yaxis[isovelocity_b], np.nan)
+            mask_b = abs(self.yaxis[:, None] - mask_b[None, :]) <= self.bmaj
+
+            mask_t = np.logical_and(mask_snr[cidx], mask_t)
+            mask_b = np.logical_and(mask_snr[cidx], mask_b)
+
+            kernel = Gaussian2DKernel(nbeams * self.bmaj / self.dpix / 2.355)
+            mask_t = convolve(mask_t, kernel) >= 0.1
+            mask_b = convolve(mask_b, kernel) >= 0.1
+
+            # We want to remove regions where the masks overlap (generally at
+            # the disk edge along the major axis) and where there is only a top
+            # or a bottom mask.
+
+            overlap = np.logical_and(mask_t, mask_b)
+            mask_t = np.where(~overlap, mask_t, False)
+            mask_b = np.where(~overlap, mask_b, False)
+
+            both_masks = np.logical_and(np.any(mask_t, axis=0),
+                                        np.any(mask_b, axis=0))
+            mask_t = np.where(both_masks[None, :], mask_t, False)
+            mask_b = np.where(both_masks[None, :], mask_b, False)
+
+            # Add the masks to the arrays.
+
+            mask_near += [mask_t]
+            mask_far += [mask_b]
+
+        # Check the shapes of the arrays. Note that the shame of the masks
+        # are the same as the full data (self.data), while the rotated and
+        # aligned data (data) has been clipped in velocity space.
+
+        mask_near, mask_far = np.squeeze(mask_near), np.squeeze(mask_far)
+        assert mask_near.shape == mask_far.shape == self.data.shape
+        return mask_near, mask_far
+
+    def get_keplerian_mask(self, x0, y0, inc, PA, mstar, vlsr, dist, r_min=0.0,
+                           r_max=None, width=2.0, smooth=None, tolerance=1e-4):
         """
         Produce a Keplerian mask for the data.
 
@@ -165,7 +484,7 @@ class observation(imagecube):
                 consider part of the mask after convolution.
 
         Returns:
-            A 3D array describing the mask with either 1 or 0.
+            A 3D array describing the mask with either ``True`` or ``False``.
         """
 
         # Generate line-of-sight velocity profile.
@@ -198,11 +517,12 @@ class observation(imagecube):
             mask = np.array([gaussian_filter(c, kernel) for c in mask])
             mask = np.where(mask >= tolerance, 1.0, 0.0)
         assert mask.shape == self.data.shape, "mask.shape != data.shape"
-        return mask
+        return mask.astype('bool')
 
     def _get_velocity_clip_data(self, data, chans=None):
         """Clip the data based on a provided channel range."""
-        chans = chans or [0, data.shape[0] - 1]
+        if chans is None:
+            chans = [0, data.shape[0] - 1]
         chans = np.atleast_2d(chans).astype('int')
         if chans.min() < 0:
             raise ValueError("`chans` has negative values.")
@@ -224,7 +544,7 @@ class observation(imagecube):
             data = observation._rotate_image(data, PA)
         return data
 
-    def _detect_peaks(self, data, inc, r_min, r_max, chans, min_SNR=5.0,
+    def _detect_peaks(self, data, inc, r_min, r_max, vlsr, chans, min_SNR=5.0,
                       kernel=None, return_back=True, detect_peaks_kwargs=None,
                       force_opposite_sides=True):
         """Wrapper for `detect_peaks.py`."""
@@ -351,9 +671,16 @@ class observation(imagecube):
                     rb, zb = np.nan, np.nan
                     Inub = np.nan
 
+                # Transform the channel velocity to the true velocity following
+                # Eqn. 3 from Pinte et al. (2018).
+
+                v_int = (v - vlsr) * r / x_c / np.sin(inc_rad)
+
+                # Bring together all the points needed for a surface instance.
+
                 peaks = [r, z, Inu, self.jybeam_to_Tb(Inu),
-                         v, x_c, y_n, y_f, rb, zb, Inub,
-                         self.jybeam_to_Tb(Inu), y_nb, y_fb]
+                         v_int, x_c, y_n, y_f, rb, zb, Inub,
+                         self.jybeam_to_Tb(Inu), y_nb, y_fb, v]
                 _surface += [peaks]
 
         # Remove any non-finite values and return.
@@ -448,7 +775,7 @@ class observation(imagecube):
     # -- PLOTTING FUNCTIONS -- #
 
     def plot_channels(self, chans=None, velocities=None, return_fig=False,
-                      keplerian_mask_kwargs=None):
+                      get_keplerian_mask_kwargs=None):
         """
         Plot the channels within the channel range or velocity range. Only one
         of ``chans`` or ``velocities`` can be specified. If neither is
@@ -464,8 +791,8 @@ class observation(imagecube):
                 specified if ``chans`` is also specified.
             return_fig (optional[bool]): Whether to return the Matplotlib
                 figure.
-            keplerian_mask_kwargs (optional[dict]): A dictionary of arguments
-                to pass to ``keplerian_mask`` such that the mask outline can
+            get_keplerian_mask_kwargs (optional[dict]): A dictionary of arguments
+                to pass to ``get_keplerian_mask`` such that the mask outline can
                 be overlaid.
 
         Returns:
@@ -476,8 +803,8 @@ class observation(imagecube):
 
         # Calculate the Keplerian mask.
 
-        if keplerian_mask_kwargs is not None:
-            mask = self.keplerian_mask(**keplerian_mask_kwargs)
+        if get_keplerian_mask_kwargs is not None:
+            mask = self.get_keplerian_mask(**get_keplerian_mask_kwargs)
         else:
             mask = None
 
@@ -565,7 +892,11 @@ class observation(imagecube):
                            reflect=True, smooth=None, return_fig=False):
         """
         Plot the isovelocity contours for the given emission surface. This will
-        use the channels used for the extraction of the emission surface.
+        only overlay contours on the channels used for the extraction of the
+        emission surface.
+
+        TODO: Rather than an analytical profile, use the rolling statistic or
+        binned profile.
 
         Args:
             surface (surface instance): The extracted emission surface.
@@ -697,7 +1028,7 @@ class observation(imagecube):
             # Plot the back side.
 
             if side.lower() in ['back', 'both']:
-                toplot = surface.v(side='back') == vv
+                toplot = surface.v_chan(side='back') == vv
                 ax.scatter(surface.x(side='back')[toplot],
                            surface.y(side='back', edge='far')[toplot],
                            lw=0.0, color='r', marker='.')
@@ -708,13 +1039,76 @@ class observation(imagecube):
             # Plot the front side.
 
             if side.lower() in ['front', 'both']:
-                toplot = surface.v(side='front') == vv
+                toplot = surface.v_chan(side='front') == vv
                 ax.scatter(surface.x(side='front')[toplot],
                            surface.y(side='front', edge='far')[toplot],
                            lw=0.0, color='b', marker='.')
                 ax.scatter(surface.x(side='front')[toplot],
                            surface.y(side='front', edge='near')[toplot],
                            lw=0.0, color='b', marker='.')
+
+            ax.xaxis.set_major_locator(MaxNLocator(5))
+            ax.yaxis.set_major_locator(MaxNLocator(5))
+            ax.grid(ls='--', lw=1.0, alpha=0.2)
+
+            if ax != axs[-1, 0]:
+                ax.set_xticklabels([])
+                ax.set_yticklabels([])
+            else:
+                ax.set_xlabel('Offset (arcsec)')
+                ax.set_ylabel('Offset (arcsec)')
+
+        # Remove unused axes.
+
+        if axs.size != velocities.size:
+            for ax in axs.flatten()[-(axs.size - velocities.size):]:
+                ax.axis('off')
+
+        # Returns.
+
+        if return_fig:
+            return fig
+
+    def plot_mask(self, surface, nbeams=1.0, return_fig=False):
+        """
+        Args:
+            surface (surface instance): The extracted surface returned from
+                ``get_emission_surface``.
+            nbeams:
+            return_fig (optional[bool]): Whether to return the Matplotlib
+                figure. Defaults to ``True``.
+
+        Returns:
+            If ``return_fig=True``, the Matplotlib figure used for plotting.
+        """
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import MaxNLocator
+
+        # Define the channel map grid.
+
+        velocities = self.velax[surface.chans.min():surface.chans.max()+1]
+        nrows = np.ceil(velocities.size / 5).astype(int)
+        fig, axs = plt.subplots(ncols=5, nrows=nrows, figsize=(11, 2*nrows+1),
+                                constrained_layout=True)
+
+        # Grab the data, velocity axis and the masks.
+
+        velax = self.velax[surface.chans.min():surface.chans.max()+1]
+
+        for vv, ax in zip(velocities, axs.flatten()):
+
+            c_idx = abs(velax - vv).argmin()
+            m_idx = abs(self.velax - vv).argmin()
+
+            ax.imshow(surface.data[c_idx], origin='lower', extent=self.extent,
+                      cmap='binary_r', vmin=0.0, vmax=0.75*surface.data.max())
+
+            ax.contour(self.xaxis, self.yaxis, surface.mask_near[m_idx],
+                       colors='r')
+            ax.contour(self.xaxis, self.yaxis, surface. mask_far[m_idx],
+                       colors='b')
+
+            # Gentrification.
 
             ax.xaxis.set_major_locator(MaxNLocator(5))
             ax.yaxis.set_major_locator(MaxNLocator(5))

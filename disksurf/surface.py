@@ -13,7 +13,7 @@ class surface(object):
         z_f (array): Vertical position of the front surface in [arcsec].
         I_f (array): Intensity along the front surface in [Jy/beam].
         T_f (array): Brightness temperature along the front surface in [K].
-        v (array): Velocity in [km/s].
+        v (array): Intrinsic velocity in [m/s].
         x (array): Distance along the major axis the point was extracted in
             [arcsec].
         y_n (array): Distance along the minor axis of the near peak for the
@@ -28,6 +28,8 @@ class surface(object):
             back surface in [arcsec].
         y_f_b (array): Distance along the minor axis of the far peak for the
             back surface in [arcsec].
+        v_chan (array): The velocity of the channel the point was extracted
+            from in [m/s].
         chans (tuple): A tuple of the first and last channels used for the
             emission surface extraction.
         rms (float): Noise in the cube in [Jy/beam].
@@ -39,17 +41,20 @@ class surface(object):
             extraction in [deg].
         PA (float): Position angle of the disk used in the emission surface
             extraction in [deg].
+        vlsr (float): Systemic velocity of the system in [m/s].
         r_min (float): Minimum disk-centric radius used in the emission surface
             extraction in [arcsec].
         r_max (array): Maximum disk-centric radius used in the emission surface
             extraction in [arcsec].
         data (array): The data used to extract the emission surface in
             [Jy/beam].
+        masks (array): A tuple of the near and far masks used to extract the
+            emission surface [bool].
     """
 
     def __init__(self, r_f, z_f, I_f, T_f, v, x, y_n, y_f, r_b, z_b, I_b,
-                 T_b, y_n_b, y_f_b, chans, rms, x0, y0, inc, PA, r_min,
-                 r_max, data):
+                 T_b, y_n_b, y_f_b, v_chan, chans, rms, x0, y0, inc, PA, vlsr,
+                 r_min, r_max, data, masks):
 
         # Parameters used to extract the emission surface.
 
@@ -57,11 +62,26 @@ class surface(object):
         self.PA = PA
         self.x0 = x0
         self.y0 = y0
+        self.vlsr = vlsr
         self.chans = chans
         self.r_min = r_min
         self.r_max = r_max
         self.rms = rms
         self.data = data
+
+        # Split the mask into near and far masks. If there is only one mask we
+        # assume the same mask for near and far.
+
+        masks = np.squeeze(masks)
+        if masks.ndim == 4:
+            self.mask_near = masks[0]
+            self.mask_far = masks[1]
+        elif masks.ndim == 3:
+            self.mask_near = masks
+            self.mask_far = masks
+        else:
+            self.mask_near = np.ones(self.data.shape).astype('bool')
+            self.mask_far = np.ones(self.data.shape).astype('bool')
 
         # Properties of the emission surface.
 
@@ -82,6 +102,7 @@ class surface(object):
         self._y_f_f = np.squeeze(y_f)[idx]
         self._y_n_b = np.squeeze(y_n_b)[idx]
         self._y_f_b = np.squeeze(y_f_b)[idx]
+        self._v_chan = np.squeeze(v_chan)[idx]
         self.reset_mask()
 
     def r(self, side='front', masked=True):
@@ -208,7 +229,7 @@ class surface(object):
 
     def v(self, side='front', masked=True):
         """
-        Velocity that the (r, z) coordinate was extracted at in [m/s].
+        Intrinsic velocity at the (r, z) coordinate in [m/s].
 
         Args:
             side (optional[str]): Side of the disk. Must be ``'front'``,
@@ -217,7 +238,7 @@ class surface(object):
                 the default, or all points.
 
         Returns:
-            Velocity that the (r, z) coordinate was extracted at in [m/s].
+            Intrinsic velocity at the (r, z) coordinate in [m/s].
         """
         if side not in ['front', 'back', 'both']:
             raise ValueError(f"Unknown `side` value {side}.")
@@ -313,6 +334,36 @@ class surface(object):
                     y_tmp = self._y_f_b.copy()
                 y = np.concatenate([y, y_tmp])
         return np.squeeze(y[1:])
+
+    def v_chan(self, side='front', masked=True):
+        """
+        Channel velocity that the (r, z) coordinate was extracted at in [m/s].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Velocity that the (r, z) coordinate was extracted at in [m/s].
+        """
+        if side not in ['front', 'back', 'both']:
+            raise ValueError(f"Unknown `side` value {side}.")
+        v = np.empty(1)
+        if side in ['front', 'both']:
+            if masked:
+                v_tmp = self._v_chan[self._mask_f].copy()
+            else:
+                v_tmp = self._v_chan.copy()
+            v = np.concatenate([v, v_tmp])
+        if side in ['back', 'both']:
+            if masked:
+                v_tmp = self._v_chan[self._mask_b].copy()
+            else:
+                v_tmp = self._v_chan.copy()
+            v = np.concatenate([v, v_tmp])
+        return np.squeeze(v[1:])
 
     def zr(self, side='front', reflect=True, masked=True):
         """
@@ -536,6 +587,7 @@ class surface(object):
 
     @staticmethod
     def convolve(x, N=7):
+        """Convolve x with a Hanning kernel of size ``N``."""
         kernel = np.hanning(N)
         kernel /= kernel.sum()
         x_a = np.convolve(x, kernel, mode='same')
@@ -565,6 +617,29 @@ class surface(object):
             with the uncertainty, ``dz``, given as the bin standard deviation.
         """
         return self.binned_parameter('z', rvals=rvals, rbins=rbins, side=side,
+                                     reflect=reflect, masked=masked)
+
+    def binned_velocity_profile(self, rvals=None, rbins=None, side='front',
+                                reflect=True, masked=True):
+        """
+        Bin the velocity onto a regular grid. This is a simple wrapper to the
+        ``binned_parameter`` function.
+
+        Args:
+            rvals (optional[array]): Desired bin centers.
+            rbins (optional[array]): Desired bin edges.
+            side (optional[str]): Which 'side' of the disk to bin, must be one
+                of ``'both'``', ``'front'`` or ``'back'``.
+            reflect (Optional[bool]): Whether to reflect the emission height of
+                the back side of the disk about the midplane.
+            masked (Optional[bool]): Whether to use the masked data points.
+                Default is ``True``.
+
+        Returns:
+            The bin centers, ``r``, and the average emission surface, ``z``,
+            with the uncertainty, ``dz``, given as the bin standard deviation.
+        """
+        return self.binned_parameter('v', rvals=rvals, rbins=rbins, side=side,
                                      reflect=reflect, masked=masked)
 
     def binned_parameter(self, p, rvals=None, rbins=None, side='front',
@@ -645,6 +720,35 @@ class surface(object):
         idx = np.isfinite(z) & np.isfinite(dz)
         return np.squeeze(r[idx]), np.squeeze(z[idx]), np.squeeze(dz[idx])
 
+    def rolling_velocity_profile(self, window=0.1, side='front', reflect=True,
+                                 masked=True):
+        """
+        Return the rolling average of the velocity profile. As the radial
+        sampling is unevenly spaced the kernel size, which is a fixed number of
+        samples, can vary in the radial range it represents. The uncertainty is
+        taken as the rolling standard deviation.
+
+        Args:
+            window (optional[float]): Window size in [arcsec].
+            side (optional[str]): Which 'side' of the disk to bin, must be one
+                of ``'both'``', ``'front'`` or ``'back'``.
+            reflect (optional[bool]): Whether to reflect the emission height of
+                the back side of the disk about the midplane.
+            masked (optional[bool]): Whether to use the masked data points.
+                Default is ``True``.
+
+        Returns:
+            The radius, ``r``, velocity, ``v``, and uncertainty, ``dv``.
+        """
+        r, v = self.rolling_statistic(p='v', func=np.nanmean, window=window,
+                                      side=side, reflect=reflect,
+                                      masked=masked, remove_NaN=False)
+        r, dv = self.rolling_statistic(p='v', func=np.nanstd, window=window,
+                                       side=side, reflect=reflect,
+                                       masked=masked, remove_NaN=False)
+        idx = np.isfinite(v) & np.isfinite(dv)
+        return np.squeeze(r[idx]), np.squeeze(v[idx]), np.squeeze(dv[idx])
+
     def rolling_statistic(self, p, func=np.nanmean, window=0.1, side='front',
                           reflect=True, masked=True, remove_NaN=True):
         """
@@ -653,7 +757,7 @@ class surface(object):
         samples, can vary in the radial range it represents.
 
         Args:
-            p (str): Parameter to appl the rolling statistic to. For example,
+            p (str): Parameter to apply the rolling statistic to. For example,
                 to use the emission height, ``p='z'``.
             func (Optional[callable]): The function to apply to the data.
             window (Optional[float]): Window size in [arcsec].
@@ -693,6 +797,74 @@ class surface(object):
         dr = np.where(dr == 0.0, 1e-10, dr)
         w = np.median(window / dr).astype('int')
         return w if w % 2 else w + 1
+
+    # -- INTERPOLATION FUNCTIONS -- #
+
+    def interpolate_parameter(self, p, method='rolling', smooth=7,
+                              interp1d_kw=None, func=np.nanmean, window=0.1,
+                              remove_NaN=True, rvals=None, rbins=None,
+                              side='front', reflect=True, masked=True):
+        """
+        Return an interpolatable function for a given parameter. This function
+        is essentially a wrapper for ``scipy.interpolate.interp1d``.
+
+        Args:
+            p (str): Parameter to return an interpolation of.
+            method (optional[str]): Method used to create an initial radial
+                profile of the parameter, either a rolling statistic with
+                ``'rolling'`` or a radially binned statistic with ``'binned'``.
+            smooth (optional[int]): Smooth the profile by convolving with a
+                Hanning kernel with a size of ``smooth``.
+            interp1d_kw (optional[dict]): Kwargs to pass to
+                ``scipy.interpolate.interp1d``.
+            func (Optional[callable]): The function to apply to the data if
+                using ``method='rolling'``.
+            window (Optional[float]): Window size in [arcsec] to use if using
+                ``method='rolling'``.
+            remove_NaN (Optional[bool]): Whether to remove the NaNs if using
+                ``method='rolling'``.
+            rvals (optional[array]): Desired bin centers if using
+                ``method='binned'``.
+            rbins (optional[array]): Desired bin edges if using
+                ``method='binned'``.
+            side (Optional[str]): Which 'side' of the disk to bin, must be one
+                of ``'both'``', ``'front'`` or ``'back'``.
+            reflect (Optional[bool]): Whether to reflect the emission height of
+                the back side of the disk about the midplane.
+            masked (Optional[bool]): Whether to use the masked data points.
+                Default is ``True``.
+
+        Returns:
+            An ```interp1d`` instance of the (optionally smoothed) radial
+            profile.
+        """
+
+        # Grab the radial profile.
+
+        if method == 'rolling':
+            x, y = self.rolling_statistic(p, func=func, window=window,
+                                          side=side, reflect=reflect,
+                                          masked=masked,
+                                          remove_NaN=remove_NaN)
+        elif method == 'binned':
+            x, y, _ = self.binned_parameter(p, rvals=rvals, rbins=rbins,
+                                            side=side, reflect=reflect,
+                                            masked=masked)
+        else:
+            raise ValueError("`method` must be either 'rolling' or 'binned'.")
+
+        # Smooth the radial profile if necessary.
+
+        if smooth:
+            y = self.convolve(y, smooth)
+
+        # Build the interpolation function and return.
+
+        from scipy.interpolate import interp1d
+        interp1d_kw = {} if interp1d_kw is None else interp1d_kw
+        interp1d_kw['bounds_error'] = interp1d_kw.pop('bounds_error', False)
+        interp1d_kw['fill_value'] = interp1d_kw.pop('fill_value', np.nan)
+        return interp1d(x, y, **interp1d_kw)
 
     # -- FITTING FUNCTIONS -- #
 
@@ -1091,6 +1263,53 @@ class surface(object):
 
         ax.set_xlabel("Radius (arcsec)")
         ax.set_ylabel("Height (arcsec)")
+        ax.legend(markerfirst=False)
+
+        # Returns.
+
+        if return_fig:
+            return fig
+
+    def plot_velocity_profile(self, ax=None, plot_rolling=False, masked=True,
+                              return_fig=False, window=0.1):
+        """
+        Plot the measured velocity profile.
+
+        Args:
+            ax (Optional[Matplotlib axis]): Axes used for plotting.
+            masked (Optional[bool]): Whether to plot the maske data or not.
+                Default is ``True``.
+            return_fig (Optional[bool]): Whether to return the Matplotlib
+                figure if ``ax=None``.
+
+        Returns:
+            If ``return_fig=True``, the Matplotlib figure used for plotting.
+        """
+
+        # Generate plotting axes.
+
+        if ax is None:
+            fig, ax = plt.subplots()
+        else:
+            return_fig = False
+
+        # Plot the velocity profiles.
+
+        r = self.r(side='front', masked=masked)
+        v = self.v(side='front', masked=masked)
+        ax.scatter(r, v, color='k', marker='.', alpha=0.2)
+
+        if plot_rolling:
+            x, y, dy = self.rolling_velocity_profile(window=window,
+                                                     side='front',
+                                                     masked=masked)
+            ax.fill_between(x, y - dy, y + dy, color='r', lw=0.0, alpha=0.2)
+            ax.plot(x, y, color='r', lw=1.0, label='rolling mean')
+
+        # Gentrification.
+
+        ax.set_xlabel("Radius (arcsec)")
+        ax.set_ylabel(r"v$_{\phi}$ (arcsec)")
         ax.legend(markerfirst=False)
 
         # Returns.
