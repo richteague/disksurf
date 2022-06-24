@@ -98,8 +98,10 @@ class observation(imagecube):
             get_keplerian_mask_kwargs['r_min'] = r_min
             get_keplerian_mask_kwargs['r_max'] = r_max
             mask = self.get_keplerian_mask(**get_keplerian_mask_kwargs)
+            _, mask = self._get_velocity_clip_data(mask, chans)
         else:
             mask = np.ones(data.shape).astype('bool')
+        assert mask.shape == data.shape, "mask.shape != data.shape"
         data = np.where(mask, data, 0.0)
 
         # Define the smoothing kernel.
@@ -129,7 +131,8 @@ class observation(imagecube):
                                         min_SNR=0.0):
         """
         If a surface prior is already given then we can use that to determine
-        a mask to improve the peak detection.
+        a mask to improve the peak detection. This uses the previously found
+        velocity profile and emission surface.
 
         Args:
             prior_surface (surface instance): A previously derived ``suface``
@@ -154,6 +157,7 @@ class observation(imagecube):
         mask_near, mask_far = self.get_surface_mask(prior_surface,
                                                     nbeams,
                                                     min_SNR)
+        assert self.data.shape == mask_near.shape == mask_far.shape
 
         # Find the peaks for just the near side, and then the back side and
         # concatenate the results into a new surface instance.
@@ -290,7 +294,10 @@ class observation(imagecube):
                 dynamical mass, ``mstar`` and the source distance, ``dist``.
 
         Returns:
-            data
+            data (ndarray): Data that has been clipped in velocity space to
+                span ``min(chans)`` to ``max(chans)`` (i.e., ignoring if there
+                are any gaps in this range), then rotated and aligned such that
+                the disk major axis lies along the x-axis.
         """
         # Remove bad inclination:
 
@@ -394,14 +401,18 @@ class observation(imagecube):
         print("Calculating masks...")
 
         mask_near, mask_far = [], []
-        for cidx, velo in enumerate(self.velax):
+        for c_idx_tot, velo in enumerate(self.velax):
 
             # Skip the unused channels.
 
-            if not any([ct[0] <= cidx <= ct[1] for ct in surface.chans]):
-                mask_near += [np.zeros(self.data[0].shape).astype(bool)]
-                mask_far += [np.zeros(self.data[0].shape).astype(bool)]
+            if not any([ct[0] <= c_idx_tot <= ct[1] for ct in surface.chans]):
+                mask_near += [np.zeros(surface.data[0].shape).astype(bool)]
+                mask_far += [np.zeros(surface.data[0].shape).astype(bool)]
                 continue
+
+            # Calculate the index of the velocity clipped data.
+
+            c_idx = c_idx_tot - surface.chans.min()
 
             # Find the absolute deviation in order to define the radial range
             # of the mask. A broader tolerance will lead to the masks extending
@@ -426,8 +437,8 @@ class observation(imagecube):
             mask_b = np.where(radial_mask, self.yaxis[isovelocity_b], np.nan)
             mask_b = abs(self.yaxis[:, None] - mask_b[None, :]) <= self.bmaj
 
-            mask_t = np.logical_and(mask_snr[cidx], mask_t)
-            mask_b = np.logical_and(mask_snr[cidx], mask_b)
+            mask_t = np.logical_and(mask_snr[c_idx], mask_t)
+            mask_b = np.logical_and(mask_snr[c_idx], mask_b)
 
             kernel = Gaussian2DKernel(nbeams * self.bmaj / self.dpix / 2.355)
             mask_t = convolve(mask_t, kernel) >= 0.1
