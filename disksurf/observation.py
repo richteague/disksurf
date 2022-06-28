@@ -324,7 +324,9 @@ class observation(imagecube):
     def get_SNR_mask(self, surface=None, min_SNR=0.0):
         """
         Return a SNR based mask where pixels with intensities less than
-        ``min_SNR * RMS`` are masked.
+        ``min_SNR * RMS`` are masked. If ``min_SNR=None`` then this is ignored.
+        Note that if there is no noise in the image then no minimum SNR should
+        be specified as the noise is zero.
 
         Args:
             surface (optional[surface instance]): A previously derived
@@ -341,6 +343,8 @@ class observation(imagecube):
         else:
             data = surface.data
             rms = surface.rms
+        if min_SNR is None:
+            return np.ones(data.shape).astype('bool')
         return np.where(data >= min_SNR * rms, True, False)
 
     def get_surface_mask(self, surface, nbeams=1.0, min_SNR=0.0):
