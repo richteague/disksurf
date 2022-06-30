@@ -77,4 +77,5 @@ If you are having issues, please open a `issue <https://github.com/richteague/di
    :caption: Contents
 
    tutorials/tutorial_1
+   tutorials/tutorial_2
    user/api

@@ -25,7 +25,7 @@ class observation(imagecube):
         self.data_aligned_rotated = {}
         self.mask_keplerian = {}
 
-    def get_emission_surface(self, inc, PA, x0=0.0, y0=0.0, vlsr=0.0,
+    def get_emission_surface(self, inc, PA, vlsr, x0=0.0, y0=0.0,
                              chans=None, r_min=None, r_max=None, smooth=None,
                              nsigma=None, min_SNR=5, detect_peaks_kwargs=None,
                              get_keplerian_mask_kwargs=None,
@@ -37,9 +37,9 @@ class observation(imagecube):
         Args:
             inc (float): Disk inclination in [degrees].
             PA (float): Disk position angle in [degrees].
+            vlsr (float): Systemic velocity in [m/s].
             x0 (optional[float]): Disk offset along the x-axis in [arcsec].
             y0 (optional[float]): Disk offset along the y-axis in [arcsec].
-            vlsr (optional[float]): Systemic velocity in [m/s].
             chans (optional[list]): First and last channels to include in the
                 inference.
             r_min (optional[float]): Minimuim radius in [arcsec] of values to
@@ -688,6 +688,8 @@ class observation(imagecube):
                         if y_fb * y_nb > 0.0 and force_opposite_sides:
                             raise ValueError("Out of bounds (major axis).")
                         y_cb = 0.5 * (y_fb + y_nb)
+                        if np.sign(y_cb) == np.sign(inc):
+                            raise ValueError("Out of bounds (wrong side).")
                         rb = np.hypot(x_c, (y_fb - y_cb) / np.cos(inc_rad))
                         if not r_min <= rb <= r_max:
                             raise ValueError("Out of bounds (r).")
@@ -1085,6 +1087,12 @@ class observation(imagecube):
                 ax.scatter(surface.x(side='front')[toplot],
                            surface.y(side='front', edge='near')[toplot],
                            lw=0.0, color='b', marker='.')
+
+            # Add the velocity label.
+
+            ax.text(0.95, 0.95, '{:.2f} km/s'.format(vv / 1e3),
+                    fontsize=9, color='w', ha='right', va='top',
+                    transform=ax.transAxes)
 
             ax.xaxis.set_major_locator(MaxNLocator(5))
             ax.yaxis.set_major_locator(MaxNLocator(5))
