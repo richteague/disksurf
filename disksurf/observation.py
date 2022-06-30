@@ -87,7 +87,7 @@ class observation(imagecube):
         # TODO: Check that the PA is defined correctly.
 
         if get_keplerian_mask_kwargs is not None:
-            duplicates = ['x0', 'y0', 'inc', 'PA', 'r_min', 'r_max']
+            duplicates = ['x0', 'y0', 'inc', 'PA', 'vlsr', 'r_min', 'r_max']
             if any([f in get_keplerian_mask_kwargs for f in duplicates]):
                 msg = "Duplicate argument found in get_keplerian_mask_kwargs."
                 print("WARNING: " + msg + "Overwriting parameters.")
@@ -95,6 +95,7 @@ class observation(imagecube):
             get_keplerian_mask_kwargs['y0'] = 0.0
             get_keplerian_mask_kwargs['inc'] = inc
             get_keplerian_mask_kwargs['PA'] = 90.0
+            get_keplerian_mask_kwargs['vlsr'] = vlsr
             get_keplerian_mask_kwargs['r_min'] = r_min
             get_keplerian_mask_kwargs['r_max'] = r_max
             mask = self.get_keplerian_mask(**get_keplerian_mask_kwargs)
@@ -102,7 +103,6 @@ class observation(imagecube):
         else:
             mask = np.ones(data.shape).astype('bool')
         assert mask.shape == data.shape, "mask.shape != data.shape"
-        data = np.where(mask, data, 0.0)
 
         # Define the smoothing kernel.
 
@@ -116,9 +116,9 @@ class observation(imagecube):
 
         if self.verbose:
             print("Detecting peaks...")
-        _surf = self._detect_peaks(data=data, inc=inc, r_min=r_min,
-                                   r_max=r_max, vlsr=vlsr, chans=chans,
-                                   kernel=kernel, min_SNR=min_SNR,
+        _surf = self._detect_peaks(data=np.where(mask, data, 0.0), inc=inc,
+                                   r_min=r_min, r_max=r_max, vlsr=vlsr,
+                                   chans=chans, kernel=kernel, min_SNR=min_SNR,
                                    detect_peaks_kwargs=detect_peaks_kwargs,
                                    force_opposite_sides=force_opposite_sides)
         if self.verbose:
@@ -187,9 +187,11 @@ class observation(imagecube):
                 if not points_near or not points_far:
                     continue
 
-                # We cna skip a lot of the conditions from the standard
+                # We can skip a lot of the conditions from the standard
                 # detect_peaks loop because we just use the mask to determine
-                # if it's a channel to fit.
+                # if it's a channel to fit. We need to make sure that y_n and
+                # y_f correspond to the points neareset and furthest from the
+                # x-axis respectively.
                 # TODO: This could be vectorized relatively(?) easily.
 
                 x_c = self.xaxis[x_idx]
@@ -198,12 +200,12 @@ class observation(imagecube):
                 y_f_idx = np.nanargmax(np.where(mask_far[c_idx_tot, :, x_idx],
                                        data[c_idx, :, x_idx], np.nan))
 
-                if data[c_idx, y_f_idx, x_idx] > data[c_idx, y_n_idx, x_idx]:
+                if abs(self.yaxis[y_n_idx]) < abs(self.yaxis[y_f_idx]):
                     y_n, y_f = self.yaxis[y_n_idx], self.yaxis[y_f_idx]
-                    Inu = data[c_idx, y_f_idx, x_idx]
                 else:
                     y_n, y_f = self.yaxis[y_f_idx], self.yaxis[y_n_idx]
-                    Inu = data[c_idx, y_n_idx, x_idx]
+                Inu = max(data[c_idx, y_n_idx, x_idx],
+                          data[c_idx, y_f_idx, x_idx])
 
                 # Use (x_c, y_n, y_f, vlsr) to calculate (y_c, r, z, v)
                 # following Pinte et al. (2018).
@@ -213,8 +215,14 @@ class observation(imagecube):
                 z = y_c / np.sin(inc_rad)
                 v_chan = self.velax[c_idx_tot]
                 v_int = (v_chan - prior_surface.vlsr) * r
-                v_int /= x_c * np.sin(inc_rad)
+                v_int /= x_c * abs(np.sin(inc_rad))
                 Tb = self.jybeam_to_Tb(Inu)
+
+                # Remove points that appear to be on the wrong side or those
+                # that return a negative velocity.
+
+                if np.sign(y_c) != np.sign(inc_rad) or v_int < 0.0:
+                    continue
 
                 # Add these values to the surface list. Set all the back side
                 # values to NaNs.
@@ -386,12 +394,13 @@ class observation(imagecube):
         # the disk. TODO: Verify the the choice of PA=90.0 is appropriate.
 
         r, phi, _ = self.disk_coords(inc=surface.inc, PA=90.0, z_func=z_func)
-        v0 = v_func(r) * np.cos(phi) * np.sin(np.radians(surface.inc))
+        v0 = v_func(r) * np.cos(phi) * abs(np.sin(np.radians(surface.inc)))
         v0 += surface.vlsr
 
         # Split the v0 map into front and back sides based on the change in v0
         # as a function of y. One side is always increasing, the other is
         # always decreasing.
+        # TODO: OR IS IT?
 
         dv = np.sign(np.diff(v0, axis=0))
         dv = np.vstack([dv[0], dv])
@@ -546,14 +555,17 @@ class observation(imagecube):
         return chans, data.copy()[chans.min():chans.max()+1]
 
     def _align_and_rotate_data(self, data, x0=None, y0=None, PA=None):
-        """Align and rotate the data."""
+        """
+        Align and rotate the data. The disk center should be at (0, 0) and the
+        red-shifted axis should align with the postive (easterly) x-axis.
+        """
         if x0 != 0.0 or y0 != 0.0:
             if self.verbose:
                 print("Centering data cube...")
             x0_pix = x0 / self.dpix
             y0_pix = y0 / self.dpix
             data = observation._shift_center(data, x0_pix, y0_pix)
-        if PA != 90.0 and PA != 270.0:
+        if PA != 90.0:
             if self.verbose:
                 print("Rotating data cube...")
             data = observation._rotate_image(data, PA)
@@ -575,15 +587,17 @@ class observation(imagecube):
 
         # Infer the correct range in the y direction.
 
-        r_max_inc = r_max * np.cos(inc_rad)
+        r_max_inc = r_max * abs(np.cos(inc_rad))
         y_idx_min = abs(self.yaxis + r_max_inc).argmin()
         y_idx_max = abs(self.yaxis - r_max_inc).argmin() + 1
         assert y_idx_min < y_idx_max
 
         # Estimate the noise to remove low SNR pixels.
 
-        min_SNR = min_SNR or -1e10
-        min_Inu = min_SNR * self.estimate_RMS()
+        if min_SNR is not None:
+            min_Inu = min_SNR * self.estimate_RMS()
+        else:
+            min_Inu = -1e10
 
         # Loop through each channel, then each vertical pixel column to extract
         # the peaks.
@@ -629,6 +643,8 @@ class observation(imagecube):
                         raise ValueError("Out of bounds (RMS).")
 
                     y_n, y_f = sorted(self.yaxis[y_idx[-2:]])
+                    if abs(y_n) > abs(y_f):
+                        y_f, y_n = y_n, y_f
 
                     # Remove points that are on the same side of the major
                     # axis of the disk. This may remove poinst in the outer
@@ -642,9 +658,11 @@ class observation(imagecube):
                     # still in the bounds of acceptable values.
 
                     y_c = 0.5 * (y_f + y_n)
+                    if np.sign(y_c) != np.sign(inc):
+                        raise ValueError("Out of bounds (wrong side).")
                     r = np.hypot(x_c, (y_f - y_c) / np.cos(inc_rad))
                     if not r_min <= r <= r_max:
-                        raise ValueError("Out of bounds(r).")
+                        raise ValueError("Out of bounds (r).")
                     z = y_c / np.sin(inc_rad)
 
                     # Include the intensity of the peak position.
@@ -652,6 +670,11 @@ class observation(imagecube):
                     Inu = data[c_idx, y_idx[-1], x_idx]
                     if np.isnan(Inu):
                         raise ValueError("Out of bounds (Inu).")
+
+                    # Check that the velocity is positive.
+
+                    if (v - vlsr) * r / x_c / abs(np.sin(inc_rad)) < 0.0:
+                        raise ValueError("Out of bounds (v_int < 0).")
 
                     # Include the back side of the disk, otherwise populate
                     # all associated variables with NaNs. Follow exactly the
@@ -686,10 +709,11 @@ class observation(imagecube):
                     rb, zb = np.nan, np.nan
                     Inub = np.nan
 
-                # Transform the channel velocity to the true velocity following
-                # Eqn. 3 from Pinte et al. (2018).
+                # Transform the channel velocity to the true velocity
+                # following Eqn. 3 from Pinte et al. (2018). As sgn(x_c) =
+                # sgn(v - vlsr) then we just need to take the absolute inc.
 
-                v_int = (v - vlsr) * r / x_c / np.sin(inc_rad)
+                v_int = (v - vlsr) * r / x_c / abs(np.sin(inc_rad))
 
                 # Bring together all the points needed for a surface instance.
 

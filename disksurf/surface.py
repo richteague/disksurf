@@ -103,7 +103,7 @@ class surface(object):
         self._y_n_b = np.squeeze(y_n_b)[idx]
         self._y_f_b = np.squeeze(y_f_b)[idx]
         self._v_chan = np.squeeze(v_chan)[idx]
-        self.reset_mask()
+        self.reset_pixel_mask()
 
     def r(self, side='front', masked=True):
         """
@@ -398,9 +398,9 @@ class surface(object):
         """
         return self.I(side, masked) / self.rms
 
-    def reset_mask(self, side='both'):
+    def reset_pixel_mask(self, side='both'):
         """
-        Reset the mask.
+        Reset the mask for the individual pixels.
 
         Args:
             side (optional[str]): Side of the disk. Must be ``'front'``,
@@ -419,6 +419,17 @@ class surface(object):
             self._mask_b *= np.isfinite(self._I_b).astype('bool')
         else:
             raise ValueError(f"Unknown `side` value {side}.")
+
+    def swap_sides(self):
+        """
+        Swap the front and back points.
+        """
+        self._r_f, self._r_b = self._r_b, self._r_f
+        self._z_f, self._z_b = self._z_b, self._z_f
+        self._I_f, self._I_b = self._I_b, self._I_f
+        self._T_f, self._T_b = self._T_b, self._T_f
+        self._y_n_f, self._y_n_b = self._y_n_b, self._y_n_f
+        self._y_f_f, self._y_f_b = self._y_f_b, self._y_f_f
 
     @property
     def data_aligned_rotated_key(self):
@@ -1270,15 +1281,20 @@ class surface(object):
         if return_fig:
             return fig
 
-    def plot_velocity_profile(self, ax=None, plot_rolling=False, masked=True,
-                              return_fig=False, window=0.1):
+    def plot_velocity_profile(self, ax=None, side='front', masked=True,
+                              plot_rolling=False, window=0.1,
+                              return_fig=False):
         """
         Plot the measured velocity profile.
 
         Args:
             ax (Optional[Matplotlib axis]): Axes used for plotting.
+            side (Optional[str]): Side to plot, either ``'front'``, ``'back'``
+                or ``'both'``.
             masked (Optional[bool]): Whether to plot the maske data or not.
                 Default is ``True``.
+            plot_rolling (Optional[bool]): Whether to plot the rolling mean.
+            window (Optional[float]): Window size for the rolling mean.
             return_fig (Optional[bool]): Whether to return the Matplotlib
                 figure if ``ax=None``.
 
@@ -1295,13 +1311,13 @@ class surface(object):
 
         # Plot the velocity profiles.
 
-        r = self.r(side='front', masked=masked)
-        v = self.v(side='front', masked=masked)
+        r = self.r(side=side, masked=masked)
+        v = self.v(side=side, masked=masked)
         ax.scatter(r, v, color='k', marker='.', alpha=0.2)
 
         if plot_rolling:
             x, y, dy = self.rolling_velocity_profile(window=window,
-                                                     side='front',
+                                                     side=side,
                                                      masked=masked)
             ax.fill_between(x, y - dy, y + dy, color='r', lw=0.0, alpha=0.2)
             ax.plot(x, y, color='r', lw=1.0, label='rolling mean')
