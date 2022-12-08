@@ -608,7 +608,7 @@ class surface(object):
     # -- BINNING FUNCTIONS -- #
 
     def binned_surface(self, rvals=None, rbins=None, side='front',
-                       reflect=True, masked=True):
+                       reflect=True, masked=True, percentiles=False):
         """
         Bin the emisison surface onto a regular grid. This is a simple wrapper
         to the ``binned_parameter`` function.
@@ -620,18 +620,21 @@ class surface(object):
                 of ``'both'``', ``'front'`` or ``'back'``.
             reflect (Optional[bool]): Whether to reflect the emission height of
                 the back side of the disk about the midplane.
-            masked (Optional[bool]): Whether to use the masked data points.
+            masked (optional[bool]): Whether to use the masked data points.
                 Default is ``True``.
+            percentiles (optional[bool]): Use percentiles to estimate the bin
+                uncertainty.
 
         Returns:
             The bin centers, ``r``, and the average emission surface, ``z``,
             with the uncertainty, ``dz``, given as the bin standard deviation.
         """
         return self.binned_parameter('z', rvals=rvals, rbins=rbins, side=side,
-                                     reflect=reflect, masked=masked)
+                                     reflect=reflect, masked=masked,
+                                     percentiles=percentiles)
 
     def binned_velocity_profile(self, rvals=None, rbins=None, side='front',
-                                reflect=True, masked=True):
+                                reflect=True, masked=True, percentiles=False):
         """
         Bin the velocity onto a regular grid. This is a simple wrapper to the
         ``binned_parameter`` function.
@@ -645,16 +648,19 @@ class surface(object):
                 the back side of the disk about the midplane.
             masked (Optional[bool]): Whether to use the masked data points.
                 Default is ``True``.
+            percentiles (optional[bool]): Use percentiles to estimate the bin
+                uncertainty.
 
         Returns:
             The bin centers, ``r``, and the average emission surface, ``z``,
             with the uncertainty, ``dz``, given as the bin standard deviation.
         """
         return self.binned_parameter('v', rvals=rvals, rbins=rbins, side=side,
-                                     reflect=reflect, masked=masked)
+                                     reflect=reflect, masked=masked,
+                                     percentiles=percentiles)
 
     def binned_parameter(self, p, rvals=None, rbins=None, side='front',
-                         reflect=True, masked=True):
+                         reflect=True, masked=True, percentiles=False):
         """
         Bin the provided parameter onto a regular grid. If neither ``rvals``
         nor ``rbins`` is specified, will default to 50 bins across the radial
@@ -671,19 +677,29 @@ class surface(object):
                 the back side of the disk about the midplane.
             masked (optional[bool]): Whether to use the masked data points.
                 Default is ``True``.
+            percentiles (optional[bool]): If true, use the 16th and 84th
+                percentiles of the bin to estimate the uncertainty. Otherwise
+                use the standard deviation.
 
         Returns:
             The bin centers, ``r``, and the binned mean, ``mu``, and standard
-            deviation, ``std``, of the desired parameter.
+            deviation, ``std``, of the desired parameter. If ``percentiles=True``
+            then the median and uncertainty will be the 50th percentile and the
+            16th to 84th percentile range, respectively.
         """
         r = ', reflect={}'.format(str(reflect)) if p == 'z' else ''
         x = eval("self.{}(side='{}', masked={}{})".format(p, side, masked, r))
         rvals, rbins = self._get_bins(rvals=rvals, rbins=rbins, side=side,
                                       masked=masked)
         ridxs = np.digitize(self.r(side=side, masked=masked), rbins)
-        avg = [np.nanmean(x[ridxs == rr]) for rr in range(1, rbins.size)]
-        std = [np.nanstd(x[ridxs == rr]) for rr in range(1, rbins.size)]
-        return rvals, np.squeeze(avg), np.squeeze(std)
+        if percentiles:
+            pcnts = np.squeeze([np.percentile(x[ridxs == rr], [16, 50, 84])
+                                for rr in range(1, rbins.size)])
+            return rvals, *pcnts.T
+        else:
+            avg = [np.nanmean(x[ridxs == rr]) for rr in range(1, rbins.size)]
+            std = [np.nanstd(x[ridxs == rr]) for rr in range(1, rbins.size)]
+            return rvals, np.squeeze(avg), np.squeeze(std)
 
     def _get_bins(self, rvals=None, rbins=None, side='front', masked=True):
         """Generate bins based on desired radial sampling."""
