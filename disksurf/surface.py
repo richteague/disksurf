@@ -628,6 +628,8 @@ class surface(object):
         Returns:
             The bin centers, ``r``, and the average emission surface, ``z``,
             with the uncertainty, ``dz``, given as the bin standard deviation.
+            If ``percentiles=True`` then ``z`` will be the 50th percentile and
+            ``dz`` will be the 16th to 84th percentile range, respectively.
         """
         return self.binned_parameter('z', rvals=rvals, rbins=rbins, side=side,
                                      reflect=reflect, masked=masked,
@@ -637,7 +639,9 @@ class surface(object):
                                 reflect=True, masked=True, percentiles=False):
         """
         Bin the velocity onto a regular grid. This is a simple wrapper to the
-        ``binned_parameter`` function.
+        ``binned_parameter`` function. If ``percentiles=True`` then ``v`` will
+        be the 50th percentile and ``dv`` will be the 16th to 84th percentile
+        range, respectively.
 
         Args:
             rvals (optional[array]): Desired bin centers.
