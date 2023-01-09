@@ -8,7 +8,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="disksurf",
-    version="1.2",
+    version="1.2.1",
     author="Richard Teague",
     author_email="richard.d.teague@cfa.harvard.edu",
     description=("Infer and reproject a disk's 3D structure."),

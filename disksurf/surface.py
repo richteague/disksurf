@@ -98,6 +98,9 @@ class surface(object):
         self._v = np.squeeze(v)[idx]
         self._x = np.squeeze(x)[idx]
 
+        self._p_f = np.arccos(self._x / self._r_f)[idx]
+        self._p_b = np.arccos(self._x / self._r_b)[idx]
+
         self._y_n_f = np.squeeze(y_n)[idx]
         self._y_f_f = np.squeeze(y_f)[idx]
         self._y_n_b = np.squeeze(y_n_b)[idx]
@@ -166,6 +169,38 @@ class surface(object):
                 z_tmp = self._z_b.copy()
             z = np.concatenate([z, -z_tmp if reflect else z_tmp])
         return np.squeeze(z[1:])
+
+    def p(self, side='front', reflect=False, masked=True):
+        """
+        Polar cylindrical coordinate in [radians].
+
+        Args:
+            side (optional[str]): Side of the disk. Must be ``'front'``,
+                ``'back'`` or ``'both'``. Defaults to ``'both'``.
+            reflect (optional[bool]): Whether to reflect the backside points
+                about the midplane. Defaults to ``False``.
+            masked (optional[bool]): Whether to return only the masked points,
+                the default, or all points.
+
+        Returns:
+            Vertical cylindrical coordinate in [arcsec].
+        """
+        if side not in ['front', 'back', 'both']:
+            raise ValueError(f"Unknown `side` value {side}.")
+        p = np.empty(1)
+        if side in ['front', 'both']:
+            if masked:
+                p_tmp = self._p_f[self._mask_f].copy()
+            else:
+                p_tmp = self._p_f.copy()
+            p = np.concatenate([p, p_tmp])
+        if side in ['back', 'both']:
+            if masked:
+                p_tmp = self._p_b[self._mask_b].copy()
+            else:
+                p_tmp = self._p_b.copy()
+            p = np.concatenate([p, -p_tmp if reflect else p_tmp])
+        return np.squeeze(p[1:])
 
     def I(self, side='front', masked=True):
         """
@@ -697,7 +732,7 @@ class surface(object):
                                       masked=masked)
         ridxs = np.digitize(self.r(side=side, masked=masked), rbins)
         if percentiles:
-            pcnts = np.squeeze([np.percentile(x[ridxs == rr], [16, 50, 84])
+            pcnts = np.squeeze([np.nanpercentile(x[ridxs == rr], [16, 50, 84])
                                 for rr in range(1, rbins.size)])
             return rvals, *pcnts.T
         else:
