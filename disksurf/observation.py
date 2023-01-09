@@ -25,11 +25,10 @@ class observation(imagecube):
         self.data_aligned_rotated = {}
         self.mask_keplerian = {}
 
-    def get_emission_surface(self, inc, PA, vlsr, x0=0.0, y0=0.0,
-                             chans=None, r_min=None, r_max=None, smooth=None,
-                             nsigma=None, min_SNR=5, detect_peaks_kwargs=None,
-                             get_keplerian_mask_kwargs=None,
-                             force_opposite_sides=True):
+    def get_emission_surface(self, inc, PA, vlsr, x0=0.0, y0=0.0, chans=None,
+            r_min=None, r_max=None, smooth=None, nsigma=None, min_SNR=5,
+            force_opposite_sides=True, force_correct_shift=False,
+            detect_peaks_kwargs=None, get_keplerian_mask_kwargs=None):
         """
         Implementation of the method described in Pinte et al. (2018). There
         are several pre-processing options to help with the peak detection.
@@ -50,6 +49,16 @@ class observation(imagecube):
                 pixel column with a Gaussian kernel with a FWHM equal to
                 ``smooth * cube.bmaj``. If ``smooth == 0`` then no smoothing is
                 applied.
+            min_SNR (optional[float]): Minimum SNR of a pixel to be included in
+                the emission surface determination.
+            force_opposite_sides (optional[bool]): Whether to assert that all
+                pairs of peaks have one on either side of the major axis. By
+                default this is ``True`` which is a more conservative approach
+                but results in a lower sensitivity in the outer disk.
+            force_correct_shift (optional[bool]): Whether to assert that the
+                projected ellipse is shifted in the correct direction relative
+                to the disk major axis (i.e., removed negative emission surfaces
+                for the front side of the disk).
             return_sorted (optional[bool]): If ``True``, return the points
                 ordered in increasing radius.
             smooth_threshold_kwargs (optional[dict]): Keyword arguments passed
@@ -58,10 +67,8 @@ class observation(imagecube):
                 ``detect_peaks``. If any values are duplicated from those
                 required for ``get_emission_surface``, they will be
                 overwritten.
-            force_opposite_sides (optional[bool]): Whether to assert that all
-                pairs of peaks have one on either side of the major axis. By
-                default this is ``True`` which is a more conservative approach
-                but results in a lower sensitivity in the outer disk.
+            get_keplerian_mask_kwargs (optional[dict]): Keyward arguments passed
+                to ``get_keplerian_mask``.
 
         Returns:
             A ``disksurf.surface`` instance containing the extracted emission
@@ -104,7 +111,7 @@ class observation(imagecube):
             mask = np.ones(data.shape).astype('bool')
         assert mask.shape == data.shape, "mask.shape != data.shape"
 
-        # Define the smoothing kernel.
+        # Define the smoothing kernel and make sure it's normalized.
 
         if smooth or 0.0 > 0.0:
             kernel = np.hanning(2.0 * smooth * self.bmaj / self.dpix)
@@ -116,16 +123,31 @@ class observation(imagecube):
 
         if self.verbose:
             print("Detecting peaks...")
-        _surf = self._detect_peaks(data=np.where(mask, data, 0.0), inc=inc,
-                                   r_min=r_min, r_max=r_max, vlsr=vlsr,
-                                   chans=chans, kernel=kernel, min_SNR=min_SNR,
+        _surf = self._detect_peaks(data=np.where(mask, data, 0.0),
+                                   inc=inc,
+                                   r_min=r_min,
+                                   r_max=r_max,
+                                   vlsr=vlsr,
+                                   chans=chans,
+                                   kernel=kernel,
+                                   min_SNR=min_SNR,
                                    detect_peaks_kwargs=detect_peaks_kwargs,
-                                   force_opposite_sides=force_opposite_sides)
+                                   force_opposite_sides=force_opposite_sides,
+                                   force_correct_shift=force_correct_shift)
         if self.verbose:
             print("Done!")
-        return surface(*_surf, chans=chans, rms=self.estimate_RMS(),
-                       x0=x0, y0=y0, inc=inc, PA=PA, vlsr=vlsr, r_min=r_min,
-                       r_max=r_max, data=data, masks=mask)
+        return surface(*_surf,
+                       chans=chans,
+                       rms=self.estimate_RMS(),
+                       x0=x0,
+                       y0=y0,
+                       inc=inc,
+                       PA=PA,
+                       vlsr=vlsr,
+                       r_min=r_min,
+                       r_max=r_max,
+                       data=data,
+                       masks=mask)
 
     def get_emission_surface_with_prior(self, prior_surface, nbeams=1.0,
                                         min_SNR=0.0):
@@ -572,8 +594,8 @@ class observation(imagecube):
         return data
 
     def _detect_peaks(self, data, inc, r_min, r_max, vlsr, chans, min_SNR=5.0,
-                      kernel=None, return_back=True, detect_peaks_kwargs=None,
-                      force_opposite_sides=True):
+            kernel=None, return_back=True, detect_peaks_kwargs=None,
+            force_opposite_sides=True, force_correct_shift=True):
         """Wrapper for `detect_peaks.py`."""
 
         inc_rad = np.radians(inc)
@@ -642,6 +664,9 @@ class observation(imagecube):
                     if min(data[c_idx, y_idx[-2:], x_idx]) < min_Inu:
                         raise ValueError("Out of bounds (RMS).")
 
+                    # Reorder the points so the further side (_f) is a larger
+                    # offset from the disk major axis.
+
                     y_n, y_f = sorted(self.yaxis[y_idx[-2:]])
                     if abs(y_n) > abs(y_f):
                         y_f, y_n = y_n, y_f
@@ -651,15 +676,22 @@ class observation(imagecube):
                     # disk, but that's more conservative anyway. There is the
                     # `force_opposite_sides` switch to skip this if necessary.
 
-                    if y_f * y_n > 0.0 and force_opposite_sides:
+                    if (y_f * y_n > 0.0) and force_opposite_sides:
                         raise ValueError("Out of bounds (major axis).")
+
+                    # Check to see that the ellipse is shifted in the correct
+                    # direction relative to the disk major axis based on the
+                    # rotation direction of the disk (encoded by the user
+                    # specified inclination). If `force_correct_shift` is False
+                    # then this check is skipped.
+
+                    y_c = 0.5 * (y_f + y_n)
+                    if (np.sign(y_c) != np.sign(inc)) and force_correct_shift:
+                        raise ValueError("Out of bounds (wrong side).")
 
                     # Calculate the deprojection, making sure the radius is
                     # still in the bounds of acceptable values.
 
-                    y_c = 0.5 * (y_f + y_n)
-                    if np.sign(y_c) != np.sign(inc):
-                        raise ValueError("Out of bounds (wrong side).")
                     r = np.hypot(x_c, (y_f - y_c) / np.cos(inc_rad))
                     if not r_min <= r <= r_max:
                         raise ValueError("Out of bounds (r).")
