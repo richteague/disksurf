@@ -10,7 +10,7 @@ setup(
     name="disksurf",
     version="1.2.1",
     author="Richard Teague",
-    author_email="richard.d.teague@cfa.harvard.edu",
+    author_email="rteague@mit.edu",
     description=("Infer and reproject a disk's 3D structure."),
     long_description=long_description,
     long_description_content_type="text/markdown",
