@@ -1033,7 +1033,7 @@ class surface(object):
                                   include_cavity=False, p0=None, nwalkers=64,
                                   nburnin=1000, nsteps=500, scatter=1e-3,
                                   priors=None, returns=None, plots=None,
-                                  curve_fit_kwargs=None, niter=1):
+                                  niter=1, draws=50):
         r"""
         Fit the inferred emission surface with a tapered power law of the form
 
@@ -1091,9 +1091,8 @@ class surface(object):
             plots (optional[list]): A list of plots to make, including
                 ``'corner'`` for the standard corner plot, or ``'walkers'`` for
                 the trace of the walkers.
-            curve_fit_kwargs (optional[dict]): Kwargs to pass to
-                ``scipy.optimize.curve_fit`` if the ``p0`` values are estimated
-                through ``fit_emision_surface``.
+            draws (optional[float]): The number of draws of the posteriors to
+                use when calculating the model if ``'model'`` is requested.
 
         Returns:
             Dependent on the ``returns`` argument.
@@ -1188,8 +1187,10 @@ class surface(object):
             if tr == 'median':
                 to_return += [np.median(samples, axis=0)]
             if tr == 'model':
-                median = np.median(samples, axis=0)
-                to_return += [r, surface._parse_model(r, median, labels, r0)]
+                ztmp = []
+                for idx in np.random.randint(0, samples.shape[0], draws):
+                    ztmp += [surface._parse_model(r, samples[idx], labels, r0)]
+                to_return += [r, np.nanmean(ztmp), np.nanstd(ztmp)]
         return to_return if len(to_return) > 1 else to_return[0]
 
     def _ln_probability(self, theta, r, z, dz, labels, priors, r0):
