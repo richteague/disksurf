@@ -1,5 +1,5 @@
-from .detect_peaks import detect_peaks
 from astropy.convolution import convolve, Gaussian2DKernel
+from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
 from .surface import surface
 from gofish import imagecube
@@ -28,7 +28,8 @@ class observation(imagecube):
     def get_emission_surface(self, inc, PA, vlsr, x0=0.0, y0=0.0, chans=None,
             r_min=None, r_max=None, smooth=None, nsigma=None, min_SNR=5,
             force_opposite_sides=True, force_correct_shift=False,
-            detect_peaks_kwargs=None, get_keplerian_mask_kwargs=None):
+            detect_peaks_kwargs=None, get_keplerian_mask_kwargs=None,
+            bisector=False):
         """
         Implementation of the method described in Pinte et al. (2018). There
         are several pre-processing options to help with the peak detection.
@@ -69,6 +70,10 @@ class observation(imagecube):
                 overwritten.
             get_keplerian_mask_kwargs (optional[dict]): Keyward arguments passed
                 to ``get_keplerian_mask``.
+            bisector (optional[float]): If provided, use a bisector to infer the
+                location of the peaks. This value, spanning between 0 and 1,
+                specifies the relative height at which the bisector is
+                calculated.
 
         Returns:
             A ``disksurf.surface`` instance containing the extracted emission
@@ -119,7 +124,8 @@ class observation(imagecube):
         else:
             kernel = None
 
-        # Find all the peaks.
+        # Find all the peaks. Here we select between typical peak finding and
+        # a bisector measurement.
 
         if self.verbose:
             print("Detecting peaks...")
@@ -133,7 +139,8 @@ class observation(imagecube):
                                    min_SNR=min_SNR,
                                    detect_peaks_kwargs=detect_peaks_kwargs,
                                    force_opposite_sides=force_opposite_sides,
-                                   force_correct_shift=force_correct_shift)
+                                   force_correct_shift=force_correct_shift,
+                                   bisector=bisector)
         if self.verbose:
             print("Done!")
         return surface(*_surf,
@@ -595,11 +602,11 @@ class observation(imagecube):
 
     def _detect_peaks(self, data, inc, r_min, r_max, vlsr, chans, min_SNR=5.0,
             kernel=None, return_back=True, detect_peaks_kwargs=None,
-            force_opposite_sides=True, force_correct_shift=True):
+            force_opposite_sides=True, force_correct_shift=True,
+            bisector=False):
         """Wrapper for `detect_peaks.py`."""
 
         inc_rad = np.radians(inc)
-        detect_peaks_kwargs = detect_peaks_kwargs or {}
 
         # Infer the correct range in the x direction.
 
@@ -620,6 +627,12 @@ class observation(imagecube):
             min_Inu = min_SNR * self.estimate_RMS()
         else:
             min_Inu = -1e10
+        min_difference = -self.estimate_RMS()
+
+        # Minimum distance between the peaks. 
+
+        detect_peaks_kw = detect_peaks_kwargs or {}
+        distance = detect_peaks_kw.pop('distance', 0.5 * self.bmaj / self.dpix)
 
         # Loop through each channel, then each vertical pixel column to extract
         # the peaks.
@@ -637,7 +650,6 @@ class observation(imagecube):
             for x_idx in range(x_idx_min, x_idx_max):
 
                 x_c = self.xaxis[x_idx]
-                mpd = detect_peaks_kwargs.get('mpd', 0.05 * abs(x_c))
                 v = self.velax[c_idx_tot]
 
                 try:
@@ -655,18 +667,30 @@ class observation(imagecube):
                     # sort them into order of increasing intensity. Then split
                     # these into those above and below the major axis.
 
-                    y_idx = detect_peaks(cut, mpd=mpd, **detect_peaks_kwargs)
-                    y_idx += y_idx_min
-                    y_idx = y_idx[data[c_idx, y_idx, x_idx].argsort()]
+                    if bisector:
+                        intersection = -np.abs(cut - bisector * np.nanmax(cut))
+                        y_idx, props = find_peaks(x=intersection,
+                                                  distance=distance,
+                                                  height=min_difference)
+                        
+                        # Fail if there are more than four peaks. 
 
-                    # Check that the two peaks have a minimum SNR value.
+                        if len(y_idx) != 4:
+                            raise ValueError("More than four peaks detected.")
 
-                    if min(data[c_idx, y_idx[-2:], x_idx]) < min_Inu:
-                        raise ValueError("Out of bounds (RMS).")
+                        y_idx = np.mean([y_idx[1:], y_idx[:-1]], axis=0)
+                        y_idx = y_idx.astype('int')[[0, -1]]
 
+                    else:
+                        y_idx, props = find_peaks(x=cut,
+                                                  distance=distance,
+                                                  height=min_Inu)
+                        y_idx = y_idx[np.argsort(props['peak_heights'])]
+                        
                     # Reorder the points so the further side (_f) is a larger
                     # offset from the disk major axis.
 
+                    y_idx += y_idx_min
                     y_n, y_f = sorted(self.yaxis[y_idx[-2:]])
                     if abs(y_n) > abs(y_f):
                         y_f, y_n = y_n, y_f
