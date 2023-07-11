@@ -633,6 +633,7 @@ class observation(imagecube):
 
         detect_peaks_kw = detect_peaks_kwargs or {}
         distance = detect_peaks_kw.pop('distance', 0.5 * self.bmaj / self.dpix)
+        distance = max(distance, 1.0)
 
         # Loop through each channel, then each vertical pixel column to extract
         # the peaks.
@@ -677,8 +678,8 @@ class observation(imagecube):
 
                         if len(y_idx) != 4:
                             raise ValueError("More than four peaks detected.")
-
-                        y_idx = np.mean([y_idx[1:], y_idx[:-1]], axis=0)
+                        
+                        y_idx = np.nanmean([y_idx[1:], y_idx[:-1]], axis=0)
                         y_idx = y_idx.astype('int')[[0, -1]]
 
                     else:
