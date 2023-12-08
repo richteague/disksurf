@@ -924,7 +924,7 @@ class observation(imagecube):
         fig, axs = plt.subplots(ncols=5, nrows=nrows, figsize=(11, 2*nrows+1),
                                 constrained_layout=True)
         for a, ax in enumerate(axs.flatten()):
-            if a >= self.velax.size:
+            if a >= velocities.size:
                 continue
             ax.imshow(self.data[chans[0]+a], origin='lower',
                       extent=self.extent, vmax=0.75*np.nanmax(self.data),
