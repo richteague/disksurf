@@ -734,7 +734,7 @@ class surface(object):
         if percentiles:
             pcnts = np.squeeze([np.nanpercentile(x[ridxs == rr], [16, 50, 84])
                                 for rr in range(1, rbins.size)])
-            return rvals, *pcnts.T
+            return rvals, pcnts.T[0], pcnts.T[1], pcnts.T[2]
         else:
             avg = [np.nanmean(x[ridxs == rr]) for rr in range(1, rbins.size)]
             std = [np.nanstd(x[ridxs == rr]) for rr in range(1, rbins.size)]
