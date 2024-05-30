@@ -18,10 +18,15 @@ class observation(imagecube):
             [arcsec].
         velocity_range (optional[tuple]): A tuple of the minimum and maximum
             velocity in [m/s] to cut the cube down to.
+        restfreq (optional[float]): A user-specified rest-frame frequency in
+            [Hz] that will override the one found in the header.
     """
 
-    def __init__(self, path, FOV=None, velocity_range=None):
-        super().__init__(path=path, FOV=FOV, velocity_range=velocity_range)
+    def __init__(self, path, FOV=None, velocity_range=None, restfreq=None):
+        super().__init__(path=path,
+                         FOV=FOV,
+                         velocity_range=velocity_range,
+                         restfreq=restfreq)
         self.data_aligned_rotated = {}
         self.mask_keplerian = {}
 
