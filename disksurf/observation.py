@@ -1,5 +1,6 @@
 from .detect_peaks import detect_peaks
 from astropy.convolution import convolve, Gaussian2DKernel
+from scipy.ndimage import convolve1d
 import matplotlib.pyplot as plt
 from .surface import surface
 from gofish import imagecube
@@ -415,17 +416,26 @@ class observation(imagecube):
         # Based on the emission surface we produce a v0 map for the top side of
         # the disk. TODO: Verify the the choice of PA=90.0 is appropriate.
 
-        r, phi, _ = self.disk_coords(inc=surface.inc, PA=90.0, z_func=z_func)
+        r, phi, _ = self.disk_coords(inc=surface.inc,
+                                     PA=90.0,
+                                     z_func=z_func,
+                                     shadowed=True)
         v0 = v_func(r) * np.cos(phi) * abs(np.sin(np.radians(surface.inc)))
         v0 += surface.vlsr
 
         # Split the v0 map into front and back sides based on the change in v0
         # as a function of y. One side is always increasing, the other is
         # always decreasing.
-        # TODO: OR IS IT?
 
         dv = np.sign(np.diff(v0, axis=0))
         dv = np.vstack([dv[0], dv])
+
+        # We apply a small convolution here to remove any pixels which are zero
+        # which may arise for emission surfaces which have large variations.
+
+        kernel = [0.25, 0.25, 0.25, 0.25]
+        dv = convolve1d(dv, kernel, axis=0, mode='wrap')
+        dv = np.where(np.isfinite(v0), np.sign(dv), 0.0)
 
         # Create a SNR mask so that can be included in the convolution.
 
@@ -451,15 +461,18 @@ class observation(imagecube):
 
             # Find the absolute deviation in order to define the radial range
             # of the mask. A broader tolerance will lead to the masks extending
-            # to larger radii. TODO: Check how this is impacted with different
+            # to larger radii.
+
+            # TODO: Check how this is impacted with different
             # inclinations of disks.
 
             absolute_deviation = np.nanmin(abs(v0 - velo), axis=0)
-            radial_mask = absolute_deviation <= 0.25 * self.chan
+            radial_mask = absolute_deviation <= self.chan
 
             # Masks are a top hat function with a width of the beam across the
             # isovelocity contour, then convolved with a Gaussian kernel with a
             # FWHM equal to that of the beam major axis.
+
             # TODO: Check what values or defaults we want here.
 
             isovelocity_t = abs(np.where(dv > 0, v0, -1e10) - velo)
@@ -480,12 +493,13 @@ class observation(imagecube):
             mask_b = convolve(mask_b, kernel) >= 0.1
 
             # We want to remove regions where the masks overlap (generally at
-            # the disk edge along the major axis) and where there is only a top
-            # or a bottom mask.
+            # the disk edge along the major axis).
 
             overlap = np.logical_and(mask_t, mask_b)
             mask_t = np.where(~overlap, mask_t, False)
             mask_b = np.where(~overlap, mask_b, False)
+
+            # Remove columns where there is only a top or bottom mask.
 
             both_masks = np.logical_and(np.any(mask_t, axis=0),
                                         np.any(mask_b, axis=0))
