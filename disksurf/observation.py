@@ -1,4 +1,5 @@
 from astropy.convolution import convolve, Gaussian2DKernel
+from scipy.ndimage import convolve1d
 from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
 from .surface import surface
