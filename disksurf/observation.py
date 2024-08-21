@@ -1,6 +1,5 @@
-from .detect_peaks import detect_peaks
 from astropy.convolution import convolve, Gaussian2DKernel
-from scipy.ndimage import convolve1d
+from scipy.signal import find_peaks
 import matplotlib.pyplot as plt
 from .surface import surface
 from gofish import imagecube
@@ -19,17 +18,23 @@ class observation(imagecube):
             [arcsec].
         velocity_range (optional[tuple]): A tuple of the minimum and maximum
             velocity in [m/s] to cut the cube down to.
+        restfreq (optional[float]): A user-specified rest-frame frequency in
+            [Hz] that will override the one found in the header.
     """
 
-    def __init__(self, path, FOV=None, velocity_range=None):
-        super().__init__(path=path, FOV=FOV, velocity_range=velocity_range)
+    def __init__(self, path, FOV=None, velocity_range=None, restfreq=None):
+        super().__init__(path=path,
+                         FOV=FOV,
+                         velocity_range=velocity_range,
+                         restfreq=restfreq)
         self.data_aligned_rotated = {}
         self.mask_keplerian = {}
 
     def get_emission_surface(self, inc, PA, vlsr, x0=0.0, y0=0.0, chans=None,
             r_min=None, r_max=None, smooth=None, nsigma=None, min_SNR=5,
             force_opposite_sides=True, force_correct_shift=False,
-            detect_peaks_kwargs=None, get_keplerian_mask_kwargs=None):
+            detect_peaks_kwargs=None, get_keplerian_mask_kwargs=None,
+            bisector=False):
         """
         Implementation of the method described in Pinte et al. (2018). There
         are several pre-processing options to help with the peak detection.
@@ -70,6 +75,10 @@ class observation(imagecube):
                 overwritten.
             get_keplerian_mask_kwargs (optional[dict]): Keyward arguments passed
                 to ``get_keplerian_mask``.
+            bisector (optional[float]): If provided, use a bisector to infer the
+                location of the peaks. This value, spanning between 0 and 1,
+                specifies the relative height at which the bisector is
+                calculated.
 
         Returns:
             A ``disksurf.surface`` instance containing the extracted emission
@@ -92,7 +101,6 @@ class observation(imagecube):
                                                     r_max=r_max)
 
         # Calculate a Keplerian mask.
-        # TODO: Check that the PA is defined correctly.
 
         if get_keplerian_mask_kwargs is not None:
             duplicates = ['x0', 'y0', 'inc', 'PA', 'vlsr', 'r_min', 'r_max']
@@ -120,7 +128,8 @@ class observation(imagecube):
         else:
             kernel = None
 
-        # Find all the peaks.
+        # Find all the peaks. Here we select between typical peak finding and
+        # a bisector measurement.
 
         if self.verbose:
             print("Detecting peaks...")
@@ -134,7 +143,8 @@ class observation(imagecube):
                                    min_SNR=min_SNR,
                                    detect_peaks_kwargs=detect_peaks_kwargs,
                                    force_opposite_sides=force_opposite_sides,
-                                   force_correct_shift=force_correct_shift)
+                                   force_correct_shift=force_correct_shift,
+                                   bisector=bisector)
         if self.verbose:
             print("Done!")
         return surface(*_surf,
@@ -149,6 +159,127 @@ class observation(imagecube):
                        r_max=r_max,
                        data=data,
                        masks=mask)
+    
+    def get_emission_surface_annular(self, inc, PA, vlsr, x0=0.0, y0=0.0,
+            chans=None, r_min=None, r_max=None, iterations=0, bisector=False):
+        """
+        Extract an emission surface using annular rings rather than vertical
+        cuts through the data.
+
+        Args:
+            inc (float): Disk inclination in [degrees].
+            PA (float): Disk position angle in [degrees].
+            vlsr (float): Systemic velocity in [m/s].
+            x0 (optional[float]): Disk offset along the x-axis in [arcsec].
+            y0 (optional[float]): Disk offset along the y-axis in [arcsec].
+            chans (optional[list]): First and last channels to include in the
+                inference.
+            r_min (optional[float]): Minimuim radius in [arcsec] of values to
+                return. Default is all possible values.
+            r_max (optional[float]): Maximum radius in [arcsec] of values to
+                return. Default is all possible values.
+            iterations (optional[int]): TBD
+            bisector (optional[bool]): Whether to use a bisector approach to
+                define the peak position, ``bisector=True``, or the peak
+                intensity, ``bisector=False``.
+
+
+        Returns:
+            A ``disksurf.surface`` instance containing the extracted emission
+            surface.
+        """
+
+        # Grab the cut down and masked data.
+
+        r_min = r_min or 2.0 * self.bmaj
+        r_max = r_max or self.xaxis.max()
+        if r_min >= r_max:
+            raise ValueError("`r_min` must be less than `r_max`.")
+
+        chans, data = self.get_aligned_rotated_data(inc=inc,
+                                                    PA=PA,
+                                                    x0=x0,
+                                                    y0=y0,
+                                                    chans=chans,
+                                                    r_min=r_min,
+                                                    r_max=r_max)
+        chans = observation._parse_chans(chans)
+        
+        # We start by assuming a 2D disk to calculate the annuli.
+        # TODO: Do we want to include r_cavity as a parameter that's fit for?
+        # TODO: Do we want to allow this to be an input?
+
+        z0, psi, r_taper, q_taper = None, None, None, None
+
+        for n in range(iterations):
+
+            # Dummy lists to hold the necessary fits.
+
+            rf, zf = [], []
+
+            # Define the annuli to work with.
+
+            rvals, tvals, _ = self.disk_coords(x0=0.0, y0=0.0, inc=inc, PA=90.0,
+                                               z0=z0, psi=psi, r_taper=r_taper,
+                                               q_taper=q_taper)
+        
+            for channel in data:
+
+                # Dummy lists to hold the (ungridded) pixel locations.
+
+                xf, yf, xn, yn = [], [], [], []
+
+                # TODO: Do we want to allow the annuli width to be user-defined?
+                
+                for rbin in np.arange(r_min, r_max, 2.0 * self.dpix):
+
+                    # One half of the disk.
+                    # TODO: Use the sign of the inclination to determine which 
+                    # of sides this represents and change the tvals condition
+                    # as appropriate.
+
+                    mask = np.logical_and(abs(rvals - rbin) < self.dpix, tvals >= 0.0)
+                    if bisector:
+                        yidx, xidx = self.get_phi_bisector(tvals=tvals,
+                                                           channel=channel,
+                                                           mask=mask)
+                    else:
+                        pidx = np.nanargmax(np.where(mask, channel, np.nan))
+                        yidx, xidx = np.unravel_index(pidx, channel.shape)
+                    if np.isnan(yidx) or np.isnan(xidx):
+                        continue
+
+                    xf += [self.xaxis[xidx]]
+                    yf += [self.yaxis[yidx]]
+
+                    # Second half of the disk.
+
+                    mask = np.logical_and(abs(rvals - rbin) < self.dpix, tvals < 0.0)
+                    if bisector:
+                        yidx, xidx = self.get_phi_bisector(tvals=tvals,
+                                                           channel=channel,
+                                                           mask=mask)
+                    else:
+                        pidx = np.nanargmax(np.where(mask, channel, np.nan))
+                        yidx, xidx = np.unravel_index(pidx, channel.shape)
+                    if np.isnan(yidx) or np.isnan(xidx):
+                        continue
+
+                    xn += [self.xaxis[xidx]]
+                    yn += [self.yaxis[yidx]]
+
+                # TODO: Do we want to allow for some smoothing to happen here?
+
+                xni, yni, yfi = self.__grid_and_combine_near_and_far(xn, yn, xf, yf)
+
+                # Calculate the appropriate values for ``disksurf.surface``.
+
+                yc = 0.5 * (yni + yfi)
+                rc = np.hypot(xni, (yfi - yc) / np.cos(np.radians(inc)))
+                zc = yc / np.sin(np.radians(inc))
+
+                rf += [rc]
+                zf += [zc]
 
     def get_emission_surface_with_prior(self, prior_surface, nbeams=1.0,
                                         min_SNR=0.0):
@@ -609,11 +740,11 @@ class observation(imagecube):
 
     def _detect_peaks(self, data, inc, r_min, r_max, vlsr, chans, min_SNR=5.0,
             kernel=None, return_back=True, detect_peaks_kwargs=None,
-            force_opposite_sides=True, force_correct_shift=True):
+            force_opposite_sides=True, force_correct_shift=True,
+            bisector=False):
         """Wrapper for `detect_peaks.py`."""
 
         inc_rad = np.radians(inc)
-        detect_peaks_kwargs = detect_peaks_kwargs or {}
 
         # Infer the correct range in the x direction.
 
@@ -634,6 +765,13 @@ class observation(imagecube):
             min_Inu = min_SNR * self.estimate_RMS()
         else:
             min_Inu = -1e10
+        min_difference = -self.estimate_RMS()
+
+        # Minimum distance between the peaks. 
+
+        detect_peaks_kw = detect_peaks_kwargs or {}
+        distance = detect_peaks_kw.pop('distance', 0.5 * self.bmaj / self.dpix)
+        distance = max(distance, 1.0)
 
         # Loop through each channel, then each vertical pixel column to extract
         # the peaks.
@@ -651,7 +789,6 @@ class observation(imagecube):
             for x_idx in range(x_idx_min, x_idx_max):
 
                 x_c = self.xaxis[x_idx]
-                mpd = detect_peaks_kwargs.get('mpd', 0.05 * abs(x_c))
                 v = self.velax[c_idx_tot]
 
                 try:
@@ -669,18 +806,30 @@ class observation(imagecube):
                     # sort them into order of increasing intensity. Then split
                     # these into those above and below the major axis.
 
-                    y_idx = detect_peaks(cut, mpd=mpd, **detect_peaks_kwargs)
-                    y_idx += y_idx_min
-                    y_idx = y_idx[data[c_idx, y_idx, x_idx].argsort()]
+                    if bisector:
+                        intersection = -np.abs(cut - bisector * np.nanmax(cut))
+                        y_idx, props = find_peaks(x=intersection,
+                                                  distance=distance,
+                                                  height=min_difference)
+                        
+                        # Fail if there are more than four peaks. 
 
-                    # Check that the two peaks have a minimum SNR value.
+                        if len(y_idx) != 4:
+                            raise ValueError("More than four peaks detected.")
+                        
+                        y_idx = np.nanmean([y_idx[1:], y_idx[:-1]], axis=0)
+                        y_idx = y_idx.astype('int')[[0, -1]]
 
-                    if min(data[c_idx, y_idx[-2:], x_idx]) < min_Inu:
-                        raise ValueError("Out of bounds (RMS).")
-
+                    else:
+                        y_idx, props = find_peaks(x=cut,
+                                                  distance=distance,
+                                                  height=min_Inu)
+                        y_idx = y_idx[np.argsort(props['peak_heights'])]
+                        
                     # Reorder the points so the further side (_f) is a larger
                     # offset from the disk major axis.
 
+                    y_idx += y_idx_min
                     y_n, y_f = sorted(self.yaxis[y_idx[-2:]])
                     if abs(y_n) > abs(y_f):
                         y_f, y_n = y_n, y_f
@@ -774,9 +923,119 @@ class observation(imagecube):
 
         _surface = np.squeeze(_surface).T
         return _surface[:, np.isfinite(_surface[2])]
+    
+    def _grid_to_cube(self, x, y, smooth=False, remove_NaNs=False):
+        """
+        Linearally interpolate the extracted ``(x, y)`` points onto the regular
+        grid. The data can be smoothed with a top-hat kernel prior to
+        interpolation.
 
-    def get_integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0,
-                                r_max=None):
+        Args:
+            x (array): x-axis positions of peaks.
+            y (array): y-axis positions of peaks.
+            smooth (optional[int]): The size of the top-hat kernel to pre-smooth
+                the data before interpolating it.
+            remove_NaNs (optional[bool]): If ``True``, remove all pixels which
+                are NaN. If ``False``, the returned array will provide a point
+                for each column of pixels in the attached data cube.
+
+        Returns:
+            xi, yi (array, array): Interpolated 
+        """
+        from scipy.interpolate import interp1d
+        idx = np.argsort(x)
+        x, y = x[idx], y[idx]
+        if smooth:
+            k = [1.0 / smooth for _ in range(smooth)]
+            y = np.convolve(y, k, mode='same')
+        xi = self.xaxis.copy()
+        yi = interp1d(x, y, bounds_error=False, fill_value=np.nan)(xi)
+        if remove_NaNs:
+            mask = np.isfinite(xi * yi)
+            xi, yi = xi[mask], yi[mask]
+        return xi, yi
+
+    def _grid_and_combine_near_and_far(self, xn, yn, xf, yf, smooth=False):
+        """
+        Grid the near and far pixels extracted from the annular approach onto a
+        similar grid and then combine them into ``(x, yn, yf)`` which has a
+        regular spacing in ``x``.
+
+        Args:
+            xn (array): Array of the x-axis positions of the near side lobes.
+            yn (array): Array of the y-axis positions of the near side lobes.
+            xf (array): Array of the x-axis positions of the far side lobes.
+            yf (array): Array of the y-axis positions of the far side lobes.
+            smooth (optional[int]): The size of the top-hat kernel to pre-smooth
+                the data before interpolating it.
+
+        Returns:
+            xi, yni, yfi (array, array, array):
+        """
+        xi, yni = self._grid_to_cube(x=np.squeeze(xn),
+                                     y=np.squeeze(yn),
+                                     smooth=smooth,
+                                     remove_NaNs=False)
+        _, yfi = self._grid_to_cube(x=np.squeeze(xf),
+                                    y=np.squeeze(yf),
+                                    smooth=smooth,
+                                    remove_NaNs=False)
+        mask = np.isfinite(yni * yfi)
+        return xi[mask], yni[mask], yfi[mask]
+    
+    def _get_bisector(x, y, depth=0.9, find_peaks_kwargs=None):
+        """
+        For a given profile of ``y(x)``, find the bisector at a depth of
+        ``depth`` relative to the peak of ``y``.
+
+        Args:
+            x (array): x values.
+            y (array): y values.
+            depth (optional[float]): Fraction of the peak ``y`` value to
+                calculate the bisector at.
+            find_peak_kwargs (optional[dict]): Dictionary of kwargs to pass to
+                ``scipy.signal.find_peaks``.
+
+        Returns:
+            xb (float): The value of ``x`` which bisects the two points where
+                ``y = y_max * depth``.
+        """
+        idx = np.argsort(x)
+        x, y = x[idx], y[idx]
+        cut = depth * np.nanmax(y)
+        intersection = -np.abs(y - cut)
+        kw = {} if find_peaks_kwargs is None else find_peaks_kwargs
+        kw['distance'] = kw.pop('distance', 5)
+        kw['height'] = kw.popt('height', -cut/20.0)
+        peaks, props = find_peaks(x=intersection, **kw)
+        peaks = peaks[np.argsort(props['peak_heights'])[::-1]]
+        return np.mean(x[peaks][:2])
+    
+    def get_phi_bisector(self, tvals, channel, mask):
+        """
+        Get the phi bisector.
+
+        Args:
+            tvals (array): TBD
+            channel (array): TBD
+            mask (array): TBD
+
+        Returns:
+            yidx, xidx (int, int): TBD
+        """
+        assert tvals.shape == channel.shape == mask.shape
+        phi0 = self._get_bisector(x=tvals[mask],
+                                  y=channel[mask],
+                                  depth=0.9,
+                                  find_peaks_kwargs=None)
+        if np.isnan(phi0):
+            yidx, xidx = np.nan, np.nan
+        else:
+            pidx = np.where(mask, abs(tvals - phi0), np.nan)
+            yidx, xidx = np.unravel_index(np.nanargmin(pidx), channel.shape)
+        return yidx, xidx
+
+    def get_integrated_spectrum(self, x0=0.0, y0=0.0, inc=0.0, PA=0.0, r_max=None):
         """
         Calculate the integrated spectrum over a specified spatial region. The
         uncertainty is calculated assuming the spatially correlation is given
@@ -858,6 +1117,12 @@ class observation(imagecube):
         rr = np.clip(r - r_cavity, a_min=0.0, a_max=None)
         f = observation._powerlaw(rr, z0, q)
         return f * np.exp(-(rr / r_taper)**q_taper)
+    
+    @staticmethod
+    def _parse_chans(chans):
+        """Returns a list of the chans."""
+        # TODO: Should this have an extra index for the final one?
+        return np.concatenate([np.arange(c[0], c[1]+1) for c in chans])
 
     # -- PLOTTING FUNCTIONS -- #
 
@@ -913,7 +1178,7 @@ class observation(imagecube):
         fig, axs = plt.subplots(ncols=5, nrows=nrows, figsize=(11, 2*nrows+1),
                                 constrained_layout=True)
         for a, ax in enumerate(axs.flatten()):
-            if a >= self.velax.size:
+            if a >= velocities.size:
                 continue
             ax.imshow(self.data[chans[0]+a], origin='lower',
                       extent=self.extent, vmax=0.75*np.nanmax(self.data),
