@@ -375,9 +375,11 @@ class observation(imagecube):
 
                 # Remove points that appear to be on the wrong side or those
                 # that return a negative velocity.
+                # NOTE: Have removed these for now to allow for points below
+                # z = 0 to be included. Should check whether we need this.
 
-                if np.sign(y_c) != np.sign(inc_rad) or v_int < 0.0:
-                    continue
+                #if np.sign(y_c) != np.sign(inc_rad) or v_int < 0.0:
+                #   continue
 
                 # Add these values to the surface list. Set all the back side
                 # values to NaNs.
