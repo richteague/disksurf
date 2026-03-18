@@ -56,6 +56,9 @@ class observation(imagecube):
                 pixel column with a Gaussian kernel with a FWHM equal to
                 ``smooth * cube.bmaj``. If ``smooth == 0`` then no smoothing is
                 applied.
+            nsigma (optional[float]): If provided, apply an iterative sigma
+                clip to the detected peaks with this threshold before returning
+                the surface.
             min_SNR (optional[float]): Minimum SNR of a pixel to be included in
                 the emission surface determination.
             force_opposite_sides (optional[bool]): Whether to assert that all
@@ -179,7 +182,10 @@ class observation(imagecube):
                 return. Default is all possible values.
             r_max (optional[float]): Maximum radius in [arcsec] of values to
                 return. Default is all possible values.
-            iterations (optional[int]): TBD
+            iterations (optional[int]): Number of iterations to perform. On
+                each iteration the emission surface fit from the previous pass
+                is used to refine the annular coordinate system. Defaults to 0,
+                which uses a flat-disk geometry.
             bisector (optional[bool]): Whether to use a bisector approach to
                 define the peak position, ``bisector=True``, or the peak
                 intensity, ``bisector=False``.
@@ -290,14 +296,14 @@ class observation(imagecube):
         velocity profile and emission surface.
 
         Args:
-            prior_surface (surface instance): A previously derived ``suface``
+            prior_surface (surface instance): A previously derived ``surface``
                 instance from which the velocity profile and emission height
                 will be taken to define the new mask for the surface fitting.
             nbeams (optional[float]): The size of the convolution kernel in
                 beam major FWHM that is used to broaden the mask. Larger values
                 are more conservative and will take longer to converge.
-            min_SNR (optional[float]): Specift a minimum SNR of the extracted
-                points. Will used the RMS measured from the ``surface``.
+            min_SNR (optional[float]): Specify a minimum SNR of the extracted
+                points. Will use the RMS measured from the ``surface``.
 
         Returns:
             A ``disksurf.surface`` instance containing the extracted emission
@@ -412,14 +418,15 @@ class observation(imagecube):
         so this does not diverge!
 
         Args:
-            prior_surface (surface instance): A previously derived ``suface``
+            prior_surface (surface instance): A previously derived ``surface``
                 instance from which the velocity profile and emission height
                 will be taken to define the new mask for the surface fitting.
+            N (optional[int]): Number of iterations to perform. Defaults to 5.
             nbeams (optional[float]): The size of the convolution kernel in
                 beam major FWHM that is used to broaden the mask. Larger values
                 are more conservative and will take longer to converge.
-            min_SNR (optional[float]): Specift a minimum SNR of the extracted
-                points. Will used the RMS measured from the ``surface``.
+            min_SNR (optional[float]): Specify a minimum SNR of the extracted
+                points. Will use the RMS measured from the ``surface``.
 
         Returns:
             A ``disksurf.surface`` instance containing the extracted emission
@@ -496,11 +503,12 @@ class observation(imagecube):
         Args:
             surface (optional[surface instance]): A previously derived
                 ``suface`` instance.
-            min_SNR (optional[float]): Specift a minimum SNR of the extracted
-                points. Will used the RMS measured from the ``surface``.
+            min_SNR (optional[float]): Specify a minimum SNR of the extracted
+                points. Will use the RMS measured from the ``surface``.
 
-        Return:
-            SNR_mask.
+        Returns:
+            A boolean array of the same shape as the data cube, where ``True``
+            indicates pixels that exceed the SNR threshold.
         """
         if surface is None:
             data = self.data
@@ -533,11 +541,13 @@ class observation(imagecube):
             nbeams (optional[float]): The size of the convolution kernel in
                 beam major FWHM that is used to broaden the mask. Larger values
                 are more conservative and will take longer to converge.
-            min_SNR (optional[float]): Specift a minimum SNR of the extracted
-                points. Will used the RMS measured from the ``surface``.
+            min_SNR (optional[float]): Specify a minimum SNR of the extracted
+                points. Will use the RMS measured from the ``surface``.
 
         Returns:
-            mask_near, mask_far.
+            mask_near, mask_far (ndarray, ndarray): Two boolean arrays of the
+            same shape as the data cube, masking the near and far sides of the
+            disk respectively.
         """
 
         # Create an interpolatable emission surface to define the regions we
@@ -943,7 +953,8 @@ class observation(imagecube):
                 for each column of pixels in the attached data cube.
 
         Returns:
-            xi, yi (array, array): Interpolated 
+            xi, yi (array, array): Interpolated x positions and corresponding
+            y values on the regular pixel grid.
         """
         from scipy.interpolate import interp1d
         idx = np.argsort(x)
@@ -973,7 +984,9 @@ class observation(imagecube):
                 the data before interpolating it.
 
         Returns:
-            xi, yni, yfi (array, array, array):
+            xi, yni, yfi (array, array, array): Common x positions on the
+            regular pixel grid, and the corresponding interpolated near-side
+            and far-side y positions.
         """
         xi, yni = self._grid_to_cube(x=np.squeeze(xn),
                                      y=np.squeeze(yn),
@@ -996,7 +1009,7 @@ class observation(imagecube):
             y (array): y values.
             depth (optional[float]): Fraction of the peak ``y`` value to
                 calculate the bisector at.
-            find_peak_kwargs (optional[dict]): Dictionary of kwargs to pass to
+            find_peaks_kwargs (optional[dict]): Dictionary of kwargs to pass to
                 ``scipy.signal.find_peaks``.
 
         Returns:
@@ -1016,15 +1029,19 @@ class observation(imagecube):
     
     def get_phi_bisector(self, tvals, channel, mask):
         """
-        Get the phi bisector.
+        Find the pixel closest to the bisector of the emission profile along
+        the azimuthal direction within the masked region.
 
         Args:
-            tvals (array): TBD
-            channel (array): TBD
-            mask (array): TBD
+            tvals (array): 2D array of azimuthal angles in [radians], matching
+                the shape of ``channel``.
+            channel (array): 2D array of intensity values for a single channel.
+            mask (array): Boolean 2D array selecting the pixels to consider.
 
         Returns:
-            yidx, xidx (int, int): TBD
+            yidx, xidx (int, int): Row and column indices of the pixel closest
+            to the bisector angle. Returns ``(nan, nan)`` if no valid bisector
+            is found.
         """
         assert tvals.shape == channel.shape == mask.shape
         phi0 = self._get_bisector(x=tvals[mask],
@@ -1094,8 +1111,8 @@ class observation(imagecube):
 
         Args:
             data (ndarray): Data to shift if not the attached data.
-            x0 (float): Shfit along the x-axis in [pix].
-            y0 (float): Shifta long the y-axis in [pix].
+            x0 (float): Shift along the x-axis in [pix].
+            y0 (float): Shift along the y-axis in [pix].
 
         Returns:
             ndarray: Shifted array the same shape as ``data``.
@@ -1432,10 +1449,14 @@ class observation(imagecube):
 
     def plot_mask(self, surface, nbeams=1.0, return_fig=False):
         """
+        Plot the surface mask used for the iterative surface extraction on
+        channel maps.
+
         Args:
             surface (surface instance): The extracted surface returned from
                 ``get_emission_surface``.
-            nbeams:
+            nbeams (optional[float]): The size of the convolution kernel in
+                beam major FWHM used to broaden the mask. Defaults to ``1.0``.
             return_fig (optional[bool]): Whether to return the Matplotlib
                 figure. Defaults to ``True``.
 

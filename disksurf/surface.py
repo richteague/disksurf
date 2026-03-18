@@ -478,18 +478,24 @@ class surface(object):
         Mask the surface based on simple cuts to the parameters.
 
         Args:
+            side (optional[str]): Which side of the disk to mask, must be one
+                of ``'front'``, ``'back'`` or ``'both'``. Defaults to
+                ``'front'``.
+            reflect (optional[bool]): Whether to reflect the back side emission
+                heights about the midplane when applying ``min_z`` / ``max_z``
+                or ``min_zr`` / ``max_zr`` cuts. Defaults to ``False``.
             min_r (optional[float]): Minimum radius in [arcsec].
             max_r (optional[float]): Maximum radius in [arcsec].
             min_z (optional[float]): Minimum emission height in [arcsec].
             max_z (optional[float]): Maximum emission height in [arcsec].
             min_zr (optional[float]): Minimum z/r ratio.
             max_zr (optional[float]): Maximum z/r ratio.
-            min_Inu (optional[float]): Minumum intensity in [Jy/beam].
-            max_Inu (optional[float]): Maximum intensity in [Jy/beam].
+            min_I (optional[float]): Minimum intensity in [Jy/beam].
+            max_I (optional[float]): Maximum intensity in [Jy/beam].
             min_v (optional[float]): Minimum velocity in [m/s].
             max_v (optional[float]): Maximum velocity in [m/s].
-            min_snr (optional[float]): Minimum SNR ratio.
-            max_snr (optional[float]): Maximum SNR ratio.
+            min_SNR (optional[float]): Minimum SNR ratio.
+            max_SNR (optional[float]): Maximum SNR ratio.
             RMS (optional[float]): Use this RMS value in place of the
                 ``self.rms`` value for calculating the SNR masks.
         """
@@ -974,13 +980,16 @@ class surface(object):
                 of ``'both'``', ``'front'`` or ``'back'``.
             masked (optional[bool]): Whether to use the masked data points.
                 Default is ``True``.
+            return_model (optional[bool]): If ``True``, return the best-fit
+                model evaluated at the input radial points rather than the
+                fit parameters. Defaults to ``False``.
             curve_fit_kwargs (optional[dict]): Keyword arguments to pass to
                 ``scipy.optimize.curve_fit``.
 
         Returns:
             Best-fit values, ``popt``, and associated uncertainties, ``copt``,
-            for the fits if ``return_fit=False``, else the best-fit model
-            evaluated at the radial points.
+            if ``return_model=False``, else the radial points ``r`` and the
+            best-fit model ``z`` evaluated at those points.
         """
         from scipy.optimize import curve_fit
 
@@ -1069,9 +1078,13 @@ class surface(object):
             dist (Optional[float]): Convert all distances from [arcsec] to [au]
                 for the fitting. If this is provided, ``r_ref`` will change to
                 100 au unless specified by the user.
+            side (optional[str]): Which side of the disk to fit, must be one of
+                ``'front'``, ``'back'`` or ``'both'``. Defaults to ``'front'``.
+            masked (optional[bool]): Whether to use the masked data points.
+                Default is ``True``.
             tapered_powerlaw (optional[bool]): Whether to include a tapered
                 component to the powerlaw.
-            include_cavity (optional[bool]): Where to include an inner cavity.
+            include_cavity (optional[bool]): Whether to include an inner cavity.
             p0 (optional[list]): Starting guesses for the fit. If nothing is
                 provided, will try to guess from the results of
                 ``fit_emission_surface``.
@@ -1091,8 +1104,12 @@ class surface(object):
             plots (optional[list]): A list of plots to make, including
                 ``'corner'`` for the standard corner plot, or ``'walkers'`` for
                 the trace of the walkers.
-            draws (optional[float]): The number of draws of the posteriors to
-                use when calculating the model if ``'model'`` is requested.
+            niter (optional[int]): Number of times to re-run the MCMC,
+                re-initialising walkers around the median of the previous run.
+                Defaults to 1.
+            draws (optional[int]): Number of posterior draws used to compute
+                the model when ``'model'`` is included in ``returns``.
+                Defaults to 50.
 
         Returns:
             Dependent on the ``returns`` argument.
@@ -1275,14 +1292,18 @@ class surface(object):
 
         Args:
             ax (Optional[Matplotlib axis]): Axes used for plotting.
-            masked (Optional[bool]): Whether to plot the maske data or not.
-                Default is ``True``.
             side (Optional[str]): Which emission side to plot, must be
                 ``'front'``, ``'back'`` or ``'both'``.
             reflect (Optional[bool]): If plotting the ``'back'`` side of the
                 disk, whether to reflect it about disk midplane.
-            tapered_powerlaw (Optional[bool]): TBD
-            include_cavity (Optional[bool]): TBD
+            masked (Optional[bool]): Whether to plot the masked data or not.
+                Default is ``True``.
+            plot_fit (Optional[bool]): Whether to overplot the best-fit model
+                from ``fit_emission_surface``.
+            tapered_powerlaw (Optional[bool]): If ``plot_fit=True``, whether
+                to fit a tapered power law rather than a single power law.
+            include_cavity (Optional[bool]): If ``plot_fit=True``, whether
+                to include an inner cavity in the fit.
             return_fig (Optional[bool]): Whether to return the Matplotlib
                 figure if ``ax=None``.
 
@@ -1347,7 +1368,7 @@ class surface(object):
             ax (Optional[Matplotlib axis]): Axes used for plotting.
             side (Optional[str]): Side to plot, either ``'front'``, ``'back'``
                 or ``'both'``.
-            masked (Optional[bool]): Whether to plot the maske data or not.
+            masked (Optional[bool]): Whether to plot the masked data or not.
                 Default is ``True``.
             plot_rolling (Optional[bool]): Whether to plot the rolling mean.
             window (Optional[float]): Window size for the rolling mean.
